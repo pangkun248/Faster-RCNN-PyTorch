@@ -23,7 +23,7 @@ def eval(dataloader, model):
             pred_boxes += pred_boxes_
             pred_labels += pred_labels_
             pred_scores += pred_scores_
-    result = eval_detection_voc(pred_boxes, pred_labels, pred_scores,gt_boxes, gt_labels,interpolated_ap=True)
+    result = eval_detection_voc(pred_boxes, pred_labels, pred_scores,gt_boxes, gt_labels)
     return result
 
 

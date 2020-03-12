@@ -1,8 +1,8 @@
 class Config:
     # 训练图片路径,验证图片路径(mAP相关),最终测试图片路径
-    train_dir = r'E:\Faster RCNN-PyTorch\data\wenyi\train.txt'
-    val_dir = r'E:\Faster RCNN-PyTorch\data\wenyi\val.txt'
-    test_dir = r'E:\Faster RCNN-PyTorch\data\wenyi\test'
+    train_dir = r'D:\py_pro\Faster-RCNN-PyTorch\data\wenyi\train.txt'
+    val_dir = r'D:\py_pro\Faster-RCNN-PyTorch\data\wenyi\val.txt'
+    test_dir = r'D:\py_pro\Faster-RCNN-PyTorch\data\wenyi\test'
     # 图片最大与最小输入长宽尺寸
     max_size = 1000
     min_size = 600
@@ -18,8 +18,6 @@ class Config:
     weight_decay = 0.0005
     lr_decay = 0.1  # 1e-3 -> 1e-4
     lr = 1e-3
-
-    env = 'faster-rcnn'  # visdom env
     epoch = 14
 
     use_adam = False # Use Adam optimizer

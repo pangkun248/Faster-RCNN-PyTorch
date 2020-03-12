@@ -14,10 +14,10 @@ class ProposalCreator:
     def __init__(self,parent_model,):
         self.parent_model = parent_model
         self.nms_thresh = 0.7
-        self.n_train_pre_nms = 1200
-        self.n_train_post_nms = 200
-        self.n_test_pre_nms = 600
-        self.n_test_post_nms = 30
+        self.n_train_pre_nms = 12000
+        self.n_train_post_nms = 2000
+        self.n_test_pre_nms = 6000
+        self.n_test_post_nms = 300
         self.min_size = 16
 
     def __call__(self, loc, score,anchor, img_size, scale=1.):

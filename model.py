@@ -7,6 +7,7 @@ from utils.creator_tool import AnchorTargetCreator, ProposalTargetCreator, Propo
 from torch import nn
 from torch.nn import functional as F
 from config import opt
+import time
 
 
 def decom_vgg16():
@@ -381,4 +382,3 @@ def _fast_rcnn_loc_loss(pred_loc, gt_loc, gt_label, sigma):
     # Normalize by total number of negtive and positive rois.
     loc_loss /= ((gt_label >= 0).sum().float())
     return loc_loss
-

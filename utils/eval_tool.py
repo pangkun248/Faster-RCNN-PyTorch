@@ -3,7 +3,7 @@ import numpy as np
 from utils.bbox_tools import box_iou
 
 
-def eval_detection_voc(pred_boxes, pred_labels, pred_scores, gt_boxes, gt_labels, iou_thresh=0.5,interpolated_ap=False):
+def eval_detection_voc(pred_boxes, pred_labels, pred_scores, gt_boxes, gt_labels, iou_thresh=0.5):
     # 计算precision与recall
     p, r, ap, f1, cls = calc_pr(pred_boxes, pred_labels, pred_scores, gt_boxes, gt_labels, iou_thresh=iou_thresh)
     return p, r, ap, f1, cls,
@@ -82,7 +82,7 @@ def calc_pr(pred_boxes, pred_labels, pred_scores, gt_boxes, gt_labels, iou_thres
     return p, r, ap, f1, cls
 
 
-def calc_ap(prec, rec, interpolated_ap=False):
+def calc_ap(prec, rec, interpolated_ap=True):
     if interpolated_ap:
         # Voc 2010年以前使用的计算mAP的方法:11-point interpolated average precision(11点插值面积法)
         # 该种计算mAP的方法是把整个PR曲线分为11个部分,然后计算均值
