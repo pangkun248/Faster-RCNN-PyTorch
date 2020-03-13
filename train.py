@@ -55,7 +55,7 @@ if __name__ == '__main__':
             ap_table += [[cls_id, opt.class_name[cls_id], "%.3f" % p, "%.3f" % r, "%.3f" % ap, "%.3f" % f1]]
         print('\n' + AsciiTable(ap_table).table)
         eval_map = round(eval_result[2].mean(),4)
-        print("Epoch %d/%d ---- mAP:%.4f Loss:%.4f" % (epoch, 14, eval_map, loss['total_loss']))
+        print("Epoch %d/%d ---- mAP:%.4f Loss:%.4f" % (epoch, opt.epoch, eval_map, loss['total_loss']))
         # 绘制mAP和Loss曲线
         vis.line(X=np.array([epoch]), Y=np.array([eval_map]), win='mAP',
                  update=None if epoch == 1 else 'append', opts=dict(title='mAP'))
