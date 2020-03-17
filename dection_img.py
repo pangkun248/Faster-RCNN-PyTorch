@@ -8,9 +8,9 @@ import cv2
 from dataset import ImageFolder
 
 
-dection_imgs = ImageFolder(opt.test_dir)
+dection_imgs = ImageFolder(r'D:\py_pro\Faster-RCNN-PyTorch\data\wenyi\test')
 model = FasterRCNN().cuda()
-model.load_state_dict(torch.load(r'E:\Faster RCNN-PyTorch\weights\mAP0.9511.pt')['model'])
+model.load_state_dict(torch.load(r'D:\py_pro\Faster-RCNN-PyTorch\weights\map_0.9208.pt')['model'])
 model.eval()
 
 # 为每个类名配置不同的颜色

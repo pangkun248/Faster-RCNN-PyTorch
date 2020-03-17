@@ -1,6 +1,6 @@
 from collections import defaultdict
 import numpy as np
-from utils.bbox_tools import box_iou
+from utils.box_tools import box_iou
 
 
 def eval_detection_voc(pred_boxes, pred_labels, pred_scores, gt_boxes, gt_labels, iou_thresh=0.5):

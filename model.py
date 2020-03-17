@@ -1,17 +1,17 @@
 import torch
 import numpy as np
 from utils import array_tool as at
-from utils.bbox_tools import loc2box, create_anchor_all, generate_anchor_base
+from utils.box_tools import loc2box, create_anchor_all, generate_anchor_base
 from torchvision.models import vgg16
 from utils.creator_tool import AnchorTargetCreator, ProposalTargetCreator, ProposalCreator, NMS
 from torch import nn
 from torch.nn import functional as F
 from config import opt
-import time
 
 
 def decom_vgg16():
     # cfg = [64, 64, 'M', 128, 128, 'M', 256, 256, 256, 'M', 512, 512, 512, 'M', 512, 512, 512]
+    # 这里下载预训练模型时,可以手动指定下载路径,具体 参考 vgg16 -> _vgg -> load_state_dict_from_url方法中model_dir参数
     model = vgg16(pretrained=True)
     # 截取vgg16的前30层网络结构,因为再往后的就不需要了
     # the 30th layer of features is relu of conv5_3
@@ -52,19 +52,19 @@ class FasterRCNN(nn.Module):
         self.optimizer = self.get_optimizer()
         self.n_class = 19
 
-    def forward(self, x, target_boxes=None, target_labels=None, scale=1.,eval_model=False):
-        if eval_model:
-            self.score_thresh = 0.05
-        else:
+    def forward(self, x, target_boxes=None, target_labels=None, scale=1.,is_train=True):
+        if is_train:
             self.score_thresh = 0.7
+        else:
+            self.score_thresh = 0.05
 
         img_size = x.shape[2:]
         features = self.extractor(x)
         # 这里把一个batch(虽然为1)中的所有roi都放在一起了,用roi_indices来代表其所属batch的index
         # 1.torch.Size([1, 16650, 4]) 2.torch.Size([1, 16650, 2]) 3.(200, 4) 4.(200,) 5.(16650, 4)
-        rpn_locs, rpn_scores, rois, roi_indices, anchor = self.rpn(features, img_size, scale)
+        rpn_locs, rpn_scores, rois, roi_indices, anchor = self.rpn(features, img_size, scale,is_train)
         # 非训练阶段
-        if eval_model:
+        if not is_train:
             # torch.Size([300, 76]) torch.Size([300, 19])
             roi_cls_loc, roi_score = self.head(features, rois)
             return roi_cls_loc, roi_score, rois
@@ -120,7 +120,6 @@ class FasterRCNN(nn.Module):
         :param sizes: batch中每张图片的输入尺寸
         :return: 返回所有一个batch中所有图片的坐标,类,类概率值 三个值都是list型数据,里面包含的是numpy数据
         """
-        self.eval()
         bboxes = list()
         labels = list()
         scores = list()
@@ -134,8 +133,8 @@ class FasterRCNN(nn.Module):
             # 所以这里就是在0维新增一个维度,你也可以直接ctrl+鼠标左键点击np.newaxis会发现numeric.py文件中 newaxis=None
             img = at.totensor(img[None]).float()
             scale = img.shape[3] / size[1]
-            # torch.Size([300, 76]) torch.Size([300, 19]) (300, 4) (300,)理论上是这样的数据,有时候可能会小于300
-            roi_locs, roi_scores, rois = self(img, scale=scale,eval_model=True)
+            # torch.Size([300, 76]) torch.Size([300, 19]) (300, 4) 理论上是这样的数据,有时候可能会小于300
+            roi_locs, roi_scores, rois = self(img, scale=scale,is_train=False)
             roi = at.totensor(rois) / scale
 
             mean = torch.Tensor(self.loc_normalize_mean).cuda().repeat(self.n_class)[None]
@@ -167,7 +166,6 @@ class FasterRCNN(nn.Module):
             #   [array([ 0,  0,  15, 15])]
             scores.append(score)
             #   [array([0.80108094, 0.80108094, 0.80108094, 0.80108094], dtype=float32)]
-        self.train()
         return bboxes, labels, scores
 
     def _suppress(self, raw_cls_bbox, raw_prob):
@@ -272,7 +270,7 @@ class RegionProposalNetwork(nn.Module):
         normal_init(self.score, 0, 0.01)
         normal_init(self.loc, 0, 0.01)
 
-    def forward(self, x, img_size, scale=1.):
+    def forward(self, x, img_size, scale=1.,is_train=True):
         batch_size, channels, hh, ww = x.shape
         # 将整个输入图片内都布满anchor
         anchor = create_anchor_all(np.array(self.anchor_base),self.feat_stride, hh, ww)
@@ -293,7 +291,8 @@ class RegionProposalNetwork(nn.Module):
             # proposal_layer:利用rpn_loc与基础anchor得到roi,限制roi的xywh范围,
             # 按rpn_fg_scores大小截取前n个roi进行nms,截取前m个roi返回(n,m在训练与测试时不同)
             roi = self.proposal_layer(rpn_locs[i].cpu().detach().numpy(),
-                                      rpn_fg_scores[i].cpu().detach().numpy(),anchor, img_size,scale=scale)
+                                      rpn_fg_scores[i].cpu().detach().numpy(),
+                                      anchor, img_size,scale=scale,is_train=is_train)
             batch_index = i * np.ones((len(roi),), dtype=np.int32)
             rois.append(roi)
             roi_indices.append(batch_index)

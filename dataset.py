@@ -32,7 +32,6 @@ class ListDataset(Dataset):
         #            -> .div(255)
         img = tvtsf.ToTensor()(Image.open(img_path))    # torch.float32
         in_c, in_h, in_w = img.shape
-        # img = preprocess(img)
         # 缩放到最小比例,这样最终长和宽都能放缩到规定的尺寸
         scale1 = 600 / min(in_h, in_w)
         scale2 = 1000 / max(in_h, in_w)

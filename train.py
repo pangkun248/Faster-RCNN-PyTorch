@@ -31,7 +31,7 @@ if __name__ == '__main__':
     # 准备训练与验证数据
     dataset = ListDataset(opt.train_dir)
     dataloader = DataLoader(dataset, batch_size=1, shuffle=True,num_workers=opt.num_workers)
-    testset = ListDataset(opt.train_dir, is_train=False)
+    testset = ListDataset(opt.val_dir, is_train=False)
     test_dataloader = DataLoader(testset,batch_size=1,num_workers=opt.test_num_workers,shuffle=False,pin_memory=True)
     # 加载模型与权重
     model = FasterRCNN().cuda()
@@ -48,6 +48,7 @@ if __name__ == '__main__':
             loss = model(img, target_box, target_label, scale)
             loss['total_loss'].backward()
             model.optimizer.step()
+        model.eval()
         # 每个Epoch计算一次mAP
         ap_table = [["Index", "Class name", "Precision", "Recall", "AP", "F1-score"]]
         eval_result = eval(test_dataloader, model)
@@ -61,6 +62,7 @@ if __name__ == '__main__':
                  update=None if epoch == 1 else 'append', opts=dict(title='mAP'))
         vis.line(X=np.array([epoch]), Y=torch.tensor([loss['total_loss']]), win='Loss',
                  update=None if epoch == 1 else 'append', opts=dict(title='Loss'))
+        model.train()
         # 保存目前最佳模型,每隔指定Epoch加载最佳模型,同时下调学习率
         if eval_map > best_map:
             best_map = eval_map

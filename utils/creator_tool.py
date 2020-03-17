@@ -1,4 +1,4 @@
-from utils.bbox_tools import loc2box, box2loc, box_iou, _get_inside_index, _unmap, NMS
+from utils.box_tools import loc2box, box2loc, box_iou, _get_inside_index, _unmap, NMS
 import numpy as np
 
 
@@ -14,13 +14,14 @@ class ProposalCreator:
     def __init__(self,parent_model,):
         self.parent_model = parent_model
         self.nms_thresh = 0.7
+        # 下面四个数字可以缩小10倍,而对精度影响不是那么大.但是训练和测试速度却可以翻倍
         self.n_train_pre_nms = 12000
         self.n_train_post_nms = 2000
         self.n_test_pre_nms = 6000
         self.n_test_post_nms = 300
         self.min_size = 16
 
-    def __call__(self, loc, score,anchor, img_size, scale=1.):
+    def __call__(self, loc, score,anchor, img_size, scale=1.,is_train=True):
         """
         :param loc: rpn网络定位卷积得出的修正参数
         :param score: rpn网络分类卷积得出的置信度
@@ -29,13 +30,12 @@ class ProposalCreator:
         :param scale: 原始图片resize到网络输入尺寸的倍数
         :return: 经过筛选的roi
         """
-        if self.parent_model.training:
+        if is_train:
             n_pre_nms = self.n_train_pre_nms
             n_post_nms = self.n_train_post_nms
         else:
             n_pre_nms = self.n_test_pre_nms
             n_post_nms = self.n_test_post_nms
-
         roi = loc2box(anchor, loc)  # (16650, 4)
         # 限制roi的坐标范围
         roi[:, 0:4:2] = np.clip(roi[:, 0:4:2], 0, img_size[0])
@@ -149,12 +149,12 @@ class AnchorTargetCreator(object):
 class ProposalTargetCreator(object):
     """
    就像类名一样 生成Proposal对应的Target Proposal是由rpn提供的
-   先把target_box并入到roi中去,计算roi和target_box的iou,并获取每个roi和target_box的最大iou索引Ks 以及最大iou值
-   将每个roi和其最大iou的target_box的label赋值给roi,并+1(因为0为背景类)
+   先把target_box并入到roi中去,计算roi和target_box的iou,并获取每个roi和target_box的最大iou索引roi_argmaxiou 以及最大iou值roi_maxiou
+   将 target_box的label通过roi_argmaxiou赋值给roi,并+1(因为0为背景类)
    根据正负样本的iou阈值得出iou中的正负样本索引(共128个)pos_index,neg_index(组成keep_index).并随机舍弃多余的样本
    从众多roi_label中根据keep_index挑选出正负样本的label,并令负样本的label为0
-   并根据keep_index从roi中挑选出正负样本的roi,然后由Ks根据keep_index得出与len(keep_index)个roi最大iou的target_box索引
-   进一步根据这些索引与target_box得到正负样本对应的target_box 即target_box[roi_argmax_targets[keep_index]]
+   并根据keep_index从roi中挑选出正负样本的roi,然后由target_box根据roi_argmaxiou和keep_index得出len(keep_index)个
+   与roi正负样本对应的target_box 即target_box[roi_argmax_targets[keep_index]]
    最后根据正负样本的roi与其对应的target_box计算修正系数,然后减均值除以方差
    参数:
        n_sample (int): 每张图片理论上采集的样本数.
