@@ -65,8 +65,8 @@ class ImageFolder(Dataset):
 
     def __getitem__(self, index):
         img_path = self.files[index]
-        # Extract image as PyTorch tensor
-        img = tvtsf.ToTensor()(Image.open(img_path))
+        # 这里使用convert是防止使用png图片或其他格式时会有多个通道而引起的报错,
+        img = tvtsf.ToTensor()(Image.open(img_path).convert('RGB'))
         in_c, in_h, in_w = img.shape
         # img = preprocess(img)
         # 缩放到最小比例,这样最终长和宽都能放缩到规定的尺寸
