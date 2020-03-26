@@ -372,7 +372,7 @@ def _fast_rcnn_loc_loss(pred_loc, gt_loc, gt_label, sigma):
     :param sigma:                    调整l1与l2损失函数切换的关键系数
     :return:loss                     loss计算结果
     """
-    # 计算loss时只让正样本所在的权重值为1,其他默认为0.即不参与loss计算
+    # 计算loss时只让正样本所在的权重值为1,其他默认为0.即不参与loc的loss计算
     in_weight = torch.zeros(gt_loc.shape).cuda()
     in_weight[(gt_label > 0).reshape(-1, 1).expand_as(in_weight).cuda()] = 1
     loc_loss = _smooth_l1_loss(pred_loc, gt_loc, in_weight.detach(), sigma)
