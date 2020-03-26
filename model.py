@@ -376,8 +376,5 @@ def _fast_rcnn_loc_loss(pred_loc, gt_loc, gt_label, sigma):
     in_weight = torch.zeros(gt_loc.shape).cuda()
     in_weight[(gt_label > 0).reshape(-1, 1).expand_as(in_weight).cuda()] = 1
     loc_loss = _smooth_l1_loss(pred_loc, gt_loc, in_weight.detach(), sigma)
-    # ？？？？？？？？？？？？？？？？？？？？？？？？？？？？？？？？？？？
-    # 这里不太明白,参与loss计算的只有正样本,但是最终loss却除以了正负样本之和
-    # Normalize by total number of negtive and positive rois.
-    loc_loss /= ((gt_label >= 0).sum().float())
+    loc_loss /= ((gt_label > 0).sum().float())
     return loc_loss
