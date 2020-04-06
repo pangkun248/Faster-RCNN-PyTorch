@@ -95,7 +95,7 @@ def box_iou(box_a, box_b):
 def generate_anchor_base(base_size=16, ratios=[0.5, 1, 2],anchor_scales=[8, 16, 32]):
     """
     生成基础的9种长宽、面积比的anchor坐标 坐标形式x1y1x2y2
-    :param base_size: 特征提取网络下采样的倍数
+    :param base_size: 特征提取网络下采样的倍数,这里默认是vgg16
     :param ratios: 三种长宽比
     :param anchor_scales: 和 base_size组成三种面积 (16*8)**2 (16*16)**2 (16*32)**2 意味着最大anchor在原图中的面积为512*512
     :return:生成好的9种基础anchor
@@ -121,13 +121,15 @@ def create_anchor_all(anchor_base, feat_stride, height, width):
     生成相对于整张图片来说的全部anchors
     :param anchor_base: 9种基础的anchor坐标
     :param feat_stride:下采样倍数
-    :param height:图片输入高度
-    :param width:图片输入高度
+    :param height:经过特征提取网络之后的features的高
+    :param width:经过特征提取网络之后的features的宽
     :return:布满整张图片的所有anchors
     """
     shift_y = np.arange(0, height * feat_stride, feat_stride)
     shift_x = np.arange(0, width * feat_stride, feat_stride)
     shift_x, shift_y = np.meshgrid(shift_x, shift_y)
+    # 这里生成的是左上角和右下角的坐标都在每个特征点左上角(需要后面拉伸开来)共(height*width)个anchor的坐标(yxyx形式)
+    # 后面加上以特征点为中心点并且有不同面积长宽比的anchor坐标之后就成了完整的分布在fetures中的anchors
     shift = np.stack((shift_y.ravel(), shift_x.ravel(),shift_y.ravel(), shift_x.ravel()), axis=1)
     # A代表了基础anchor的个数 9
     A = anchor_base.shape[0]

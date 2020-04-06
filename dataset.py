@@ -6,6 +6,7 @@ import torch.nn.functional as F
 import random
 import glob
 
+
 class ListDataset(Dataset):
     def __init__(self,path,is_train=True):
         self.is_train = is_train
@@ -26,11 +27,11 @@ class ListDataset(Dataset):
         # 上面是加载标签数据,下面加载图片数据以及相应的处理
 
         img_path = self.img_paths[index].strip()
-        # 1.Image.open -> ndarray 注:PIL打开图片的方式默认为RGB格式,不需要再额外转换
+        # 1.Image.open -> ndarray 注:PIL打开图片的方式默认为RGB格式,不需要再额外转换,但是PNG图片为四通道所以这里需要额外转换
         # 2.ToTensor -> transpose(2, 0, 1)
         #            -> torch.from_numpy
         #            -> .div(255)
-        img = tvtsf.ToTensor()(Image.open(img_path))    # torch.float32
+        img = tvtsf.ToTensor()(Image.open(img_path).convert('RGB'))    # torch.float32
         in_c, in_h, in_w = img.shape
         # 缩放到最小比例,这样最终长和宽都能放缩到规定的尺寸
         scale1 = 600 / min(in_h, in_w)

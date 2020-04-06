@@ -1,6 +1,6 @@
 import torch
 from model import FasterRCNN
-from config import opt
+from config import cfg
 import colorsys
 from PIL import Image, ImageFont, ImageDraw
 import numpy as np
@@ -14,7 +14,7 @@ model.load_state_dict(torch.load(r'D:\py_pro\Faster-RCNN-PyTorch\weights\map_0.9
 model.eval()
 
 # 为每个类名配置不同的颜色
-cls_name = opt.class_name
+cls_name = cfg.class_name
 hsv_tuples = [(x / len(cls_name), 1., 1.)for x in range(len(cls_name))]
 colors = list(map(lambda x: colorsys.hsv_to_rgb(*x), hsv_tuples))
 colors = list(map(lambda x: (int(x[0] * 255), int(x[1] * 255), int(x[2] * 255)),colors))
@@ -46,7 +46,7 @@ for path,img_detection,size in zip(imgs_path,img_detections,imgs_size):
         for (y1,x1,y2,x2),l,s in zip(box,label,score):
             # 对预测出的坐标进行缩放
             y1, x1, y2, x2 = y1*(w/size[1]), x1*(w/size[1]), y2*(w/size[1]), x2*(w/size[1])
-            content = '{} {:.2f}'.format(opt.class_name[l], s)
+            content = '{} {:.2f}'.format(cfg.class_name[l], s)
             label_w, label_h = draw.textsize(content,content_font)
             for i in range(thickness):
                 draw.rectangle([x1 + i, y1 + i, x2 - i, y2 - i], outline=colors[l])

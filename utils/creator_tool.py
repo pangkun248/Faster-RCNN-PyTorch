@@ -1,6 +1,6 @@
 from utils.box_tools import loc2box, box2loc, box_iou, _get_inside_index, _unmap, NMS
 import numpy as np
-
+from config import cfg
 
 class ProposalCreator:
     """
@@ -9,26 +9,25 @@ class ProposalCreator:
     2.限制roi的坐标范围
     3.剔除那些宽高小于min_size的roi
     4.根据rpn分类卷积得出的conf来从大到小进行排序,并截取前 12000个roi(如果少于12000,如8000.那么就截取前8000.下面同理)
-    5.进行nms,然后截取前 2000个roi.并最终返回这些roi(训练阶段->非训练阶段,12000->6000,2000->300)
+    5.进行nms,然后截取前 2000个roi.并最终返回这些roi(训练阶段->非训练阶段,nms前12000->6000,nms后2000->300)
     """
     def __init__(self,parent_model,):
         self.parent_model = parent_model
-        self.nms_thresh = 0.7
         # 下面四个数字可以缩小10倍,而对精度影响不是那么大.但是训练和测试速度却可以翻倍
-        self.n_train_pre_nms = 12000
-        self.n_train_post_nms = 2000
-        self.n_test_pre_nms = 6000
-        self.n_test_post_nms = 300
+        self.n_train_pre_nms = 1200
+        self.n_train_post_nms = 200
+        self.n_test_pre_nms = 600
+        self.n_test_post_nms = 30
         self.min_size = 16
 
     def __call__(self, loc, score,anchor, img_size, scale=1.,is_train=True):
         """
-        :param loc: rpn网络定位卷积得出的修正参数
-        :param score: rpn网络分类卷积得出的置信度
-        :param anchor: 基础生成的anchor
-        :param img_size: 网络输入的尺寸
+        :param loc: rpn网络定位卷积得出的修正参数    (16650, 4)
+        :param score: rpn网络分类卷积得出的置信度    (16650,)
+        :param anchor: 基础生成的anchor            (16650, 4)
+        :param img_size: 网络输入的尺寸 (h,w)
         :param scale: 原始图片resize到网络输入尺寸的倍数
-        :return: 经过筛选的roi
+        :return: 经过筛选的roi 当然也可以多返回一个pred_box为是否含有物体的目标置信度
         """
         if is_train:
             n_pre_nms = self.n_train_pre_nms
@@ -45,14 +44,14 @@ class ProposalCreator:
         hs = roi[:, 2] - roi[:, 0]
         ws = roi[:, 3] - roi[:, 1]
         keep = np.where((hs >= min_size) & (ws >= min_size))[0]
-        roi = roi[keep, :]
+        roi = roi[keep]
         score = score[keep]
         # 重新根据分类置信度从大到小进行排序
-        order = score.ravel().argsort()[::-1]
+        order = score.argsort()[::-1]
         order = order[:n_pre_nms]
         roi = roi[order]
         score = score[order]
-        roi,score = NMS(roi, score, self.nms_thresh)
+        roi,score = NMS(roi, score, cfg.nms_rpn)
         roi = roi[:n_post_nms]
         return roi
 
@@ -64,7 +63,7 @@ class AnchorTargetCreator(object):
     AnchorTargetCreator 就是为此而准备的
     先从基础anchor中提取出内部框的索引 inside_index,并修改基础anchor为内部anchor.
     计算anchor与target_boxes的iou值,返回每个anchor与target_boxes的最大iou索引argmax_ious以及满足iou条件的不超过256个的正负样本索引
-    创建一个默认值为 -1的长度为len(anchor)的基础label,并根据前面得到的正负样本的索引,分别给label中正样本赋1负样本为0
+    创建一个默认值为 -1的长度为len(anchor)的基础label,并根据前面得到的正负样本的索引,分别给label中正样本赋1负样本赋0
     根据target_box与前一步得到的argmax_ious求出与anchor最匹配的target_box,然后求出真实修正系数
     最后将在内部anchor上求出的内部loc与内部label映射回基础loc(除内部loc外默认为0)与基础label(除内部label外默认为-1)上,
     最终返回基础loc与基础label
@@ -104,8 +103,15 @@ class AnchorTargetCreator(object):
                  label 所有anchor对应的标签 1 是正样本, 0 是负样本, -1 表示忽略
         """
         label = -np.ones((len(anchor),), dtype=np.int32)
-        # 每个anchor与garget_boxes的最大iou索引,值,每个target_box与anchors的最大iou索引(一个或多个)
-        argmax_ious, max_ious, gt_argmax_ious = self._calc_ious(anchor, target_box)
+
+        # 计算内框和标注框的iou
+        ious = box_iou(anchor, target_box)
+        argmax_ious = ious.argmax(axis=1)   # 每个 anchor与target_boxes的最大iou的索引
+        max_ious = ious.max(axis=1)         # 每个 anchor与target_boxes的最大iou的值
+        # 每个 target_box与所有anchors的最大iou
+        gt_max_ious = ious.max(axis=0)
+        # 这里gt_max_ious的最大值可能不是唯一的,所以需要把全部的最大iou都找出来作为 "target_anchor"的索引
+        gt_argmax_ious = np.where(ious == gt_max_ious)[0]
 
         # 首先分配负样本,以便正样本可以覆盖它们(某些情况下最大IOU可能小于neg_iou_thresh)
         # 负样本: iou小于 neg_iou_thresh的anchor
@@ -130,20 +136,6 @@ class AnchorTargetCreator(object):
             label[disable_index] = -1
 
         return argmax_ious, label
-
-    def _calc_ious(self, anchor, bbox):
-        # 计算内框和标注框的iou
-        ious = box_iou(anchor, bbox)
-        # 每个 anchor与target_box(es)的最大iou的索引
-        argmax_ious = ious.argmax(axis=1)
-        max_ious = ious.max(axis=1)
-
-        # 每个 target_box与所有anchors的最大iou
-        gt_max_ious = ious.max(axis=0)
-        # 这里gt_max_ious的最大值可能不是唯一的,所以需要把全部的最大iou都找出来作为 "target_anchor"的索引
-        gt_argmax_ious = np.where(ious == gt_max_ious)[0]
-
-        return argmax_ious, max_ious, gt_argmax_ious
 
 
 class ProposalTargetCreator(object):
@@ -172,7 +164,7 @@ class ProposalTargetCreator(object):
 
     def __call__(self, roi, target_box, label,loc_normalize_mean=(0., 0., 0., 0.),loc_normalize_std=(0.1, 0.1, 0.2, 0.2)):
         """
-        :param roi: rpn网络提供的roi,理论上为(2000,4)
+        :param roi: rpn网络提供的roi,理论上训练阶段为(2000,4) 测试阶段为(300,4)
         :param target_box: 真实标注物体的坐标 (n,4) n为一张图片中真实标注物体的个数
         :param target_label: 真实标注物体的种类索引 (n,)
         :param loc_normalize_mean: 标准化坐标的平均值
@@ -215,7 +207,8 @@ class ProposalTargetCreator(object):
 
         # 计算修正系数    roi和其最大iou的target_box的loc
         gt_roi_loc = box2loc(sample_roi, target_box[gt_assignment[keep_index]])
-        gt_roi_loc = ((gt_roi_loc - np.array(loc_normalize_mean, np.float32)) / np.array(loc_normalize_std, np.float32))
+        # 这里的减均值除以方差以及非训练阶段roi网络最后出来的roi_loc还要乘方差加均值,看不懂为什么要这样做
+        # gt_roi_loc=((gt_roi_loc - np.array(loc_normalize_mean, np.float32)) / np.array(loc_normalize_std, np.float32))
 
         return sample_roi, gt_roi_loc, gt_roi_label
 

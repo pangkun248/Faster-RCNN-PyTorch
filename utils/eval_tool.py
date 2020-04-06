@@ -1,6 +1,24 @@
 from collections import defaultdict
 import numpy as np
 from utils.box_tools import box_iou
+import torch
+from tqdm import tqdm
+
+
+def Eval(dataloader, model):
+    pred_boxes, pred_labels, pred_scores = list(), list(), list()
+    gt_boxes, gt_labels = list(), list()
+    with torch.no_grad():
+        for imgs, sizes, gt_boxes_, gt_labels_ in tqdm(dataloader):
+            sizes = [sizes[0].item(), sizes[1].item()]
+            pred_boxes_, pred_labels_, pred_scores_ = model.predict(imgs, [sizes])
+            gt_boxes += list(gt_boxes_.numpy())
+            gt_labels += list(gt_labels_.numpy())
+            pred_boxes += pred_boxes_
+            pred_labels += pred_labels_
+            pred_scores += pred_scores_
+    result = eval_detection_voc(pred_boxes, pred_labels, pred_scores,gt_boxes, gt_labels)
+    return result
 
 
 def eval_detection_voc(pred_boxes, pred_labels, pred_scores, gt_boxes, gt_labels, iou_thresh=0.5):
