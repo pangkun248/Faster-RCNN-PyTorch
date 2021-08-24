@@ -1,6 +1,8 @@
 from utils.box_tools import loc2box, box2loc, box_iou, _get_inside_index, _unmap, NMS
 import numpy as np
 from config import cfg
+from torchvision.ops import nms
+
 
 class ProposalCreator:
     """
@@ -13,11 +15,11 @@ class ProposalCreator:
     """
     def __init__(self,parent_model,):
         self.parent_model = parent_model
-        # 下面四个数字可以缩小10倍,而对精度影响不是那么大.但是训练和测试速度却可以翻倍
-        self.n_train_pre_nms = 1200
-        self.n_train_post_nms = 200
-        self.n_test_pre_nms = 600
-        self.n_test_post_nms = 30
+        # 下面四个数字有待优化
+        self.n_train_pre_nms = 12000
+        self.n_train_post_nms = 2000
+        self.n_test_pre_nms = 6000
+        self.n_test_post_nms = 300
         self.min_size = 16
 
     def __call__(self, loc, score,anchor, img_size, scale=1.,is_train=True):
@@ -51,8 +53,11 @@ class ProposalCreator:
         order = order[:n_pre_nms]
         roi = roi[order]
         score = score[order]
-        roi,score = NMS(roi, score, cfg.nms_rpn)
-        roi = roi[:n_post_nms]
+        #roi,score = NMS(roi, score, cfg.nms_rpn)
+        #roi = roi[:n_post_nms]
+        keep = nms(torch.from_numpy(roi).cuda(), torch.from_numpy(score).cuda(), self.nms_thresh)
+        keep = keep[:n_post_nms]
+        roi = roi[keep.cpu().numpy()]
         return roi
 
 
@@ -207,8 +212,8 @@ class ProposalTargetCreator(object):
 
         # 计算修正系数    roi和其最大iou的target_box的loc
         gt_roi_loc = box2loc(sample_roi, target_box[gt_assignment[keep_index]])
-        # 这里的减均值除以方差以及非训练阶段roi网络最后出来的roi_loc还要乘方差加均值,看不懂为什么要这样做
-        # gt_roi_loc=((gt_roi_loc - np.array(loc_normalize_mean, np.float32)) / np.array(loc_normalize_std, np.float32))
+        # 这里的减均值除以方差以及非训练阶段roi网络最后出来的roi_loc还要乘方差加均值
+        gt_roi_loc=((gt_roi_loc - np.array(loc_normalize_mean, np.float32)) / np.array(loc_normalize_std, np.float32))
 
         return sample_roi, gt_roi_loc, gt_roi_label
 
