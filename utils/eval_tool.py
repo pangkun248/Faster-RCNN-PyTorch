@@ -9,7 +9,7 @@ def Eval(dataloader, model):
     pred_boxes, pred_labels, pred_scores = list(), list(), list()
     gt_boxes, gt_labels = list(), list()
     with torch.no_grad():
-        for imgs, sizes, gt_boxes_, gt_labels_ in tqdm(dataloader):
+        for imgs, sizes, gt_boxes_, gt_labels_,difficult_ in tqdm(dataloader):
             sizes = [sizes[0].item(), sizes[1].item()]
             pred_boxes_, pred_labels_, pred_scores_ = model.predict(imgs, [sizes])
             gt_boxes += list(gt_boxes_.numpy())
