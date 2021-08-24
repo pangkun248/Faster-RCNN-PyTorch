@@ -75,6 +75,34 @@ class ListDataset(Dataset):
     def __len__(self):
         return len(self.ids)
 
+# 为测试图片准备
+class ImageFolder(Dataset):
+    def __init__(self, folder_path):
+        self.files = glob.glob("%s/*.*" % folder_path)
+
+    def __getitem__(self, index):
+        img_path = self.files[index]
+        # 这里使用convert是防止使用png图片或其他格式时会有多个通道而引起的报错,
+        # img = tvtsf.ToTensor()(Image.open(img_path).convert('RGB'))
+        img = np.asarray(Image.open(img_file), dtype=np.float32).transpose((2, 0, 1))
+        img = img / 255.
+        in_c, in_h, in_w = img.shape
+        # img = preprocess(img)
+        # 缩放到最小比例,这样最终长和宽都能放缩到规定的尺寸
+        scale1 = 600 / min(in_h, in_w)
+        scale2 = 1000 / max(in_h, in_w)
+        scale = min(scale1, scale2)
+        out_h, out_w = in_h * scale, in_w * scale
+        img = sktsf.resize(img, (in_c, out_h, out_w), mode='reflect', anti_aliasing=False)  # np.float64
+        img = self.normalize(torch.from_numpy(img)).numpy()
+        # img = F.interpolate(img.unsqueeze(0), size=(round(in_h * scale), round(in_w * scale)), mode="nearest").squeeze(0)
+        # img = tvtsf.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])(img)
+        return img_path, img, img.shape[1:]
+
+    def __len__(self):
+        return len(self.files)
+
+
 def flip_bbox(bbox, size, y_flip=False, x_flip=False):
     """
     这里需要说明一下,box是如何进行水平或竖直翻转的
