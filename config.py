@@ -5,8 +5,8 @@ class Config:
     # 图片最大与最小输入长宽尺寸
     max_size = 1000
     min_size = 600
-    num_workers = 2         # 取决于你的cpu核数
-    test_num_workers = 2    # 同上
+    num_workers = 8         # 取决于你的cpu核数
+    test_num_workers = 8    # 同上
 
     # 计算loss时rpn与roi所占的比重
     rpn_sigma = 3.
