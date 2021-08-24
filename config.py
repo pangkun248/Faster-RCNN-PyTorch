@@ -24,9 +24,8 @@ class Config:
     load_path = r''  # 基于此模型权重训练
     # 注意Faster-RCNN中是由背景这一类的,但是这里及xml2txt都没有 '__background__'这一类,是因为Faster-RCNN在内部临时把所有的
     # target_label都+1,计算ap以及最后nms的时候又跳过label等于0的情况. 详情参见 ProposalTargetCreator 类 以及_suppress方法
-    class_name = ("WhitehairedBanshee", "UndeadSkeleton", "WhitehairedMonster", "SlurryMonster", "MiniZalu",
-    "Dopelliwin","ShieldAxe", "SkeletonKnight","Zalu","Cyclone","SlurryBeggar","Gerozaru","Catalog",
-    "InfectedMonst","Gold","StormRider","Close","Door",)
+    class_name = ('aeroplane', 'bicycle', 'bird', 'boat', 'bottle', 'bus', 'car', 'cat', 'chair', 'cow', 'diningtable',
+                                  'dog', 'horse', 'motorbike', 'person', 'pottedplant', 'sheep', 'sofa', 'train', 'tvmonitor')
 
 
 cfg = Config()
