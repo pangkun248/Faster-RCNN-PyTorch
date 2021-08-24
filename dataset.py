@@ -1,3 +1,4 @@
+import torch
 from torch.utils.data import Dataset
 from torchvision import transforms as tvtsf
 import numpy as np
@@ -5,82 +6,74 @@ from PIL import Image
 import torch.nn.functional as F
 import random
 import glob
+import xml.etree.ElementTree as ET
+import os
+from skimage import transform as sktsf
+cls_list = ('aeroplane', 'bicycle','bird','boat', 'bottle', 'bus', 'car', 'cat', 'chair','cow', 'diningtable',
+            'dog', 'horse', 'motorbike','person', 'pottedplant',  'sheep', 'sofa',  'train', 'tvmonitor')
 
 
 class ListDataset(Dataset):
-    def __init__(self,path,is_train=True):
+    def __init__(self, data_dir, split='trainval',is_train=False):
+        id_list_file = os.path.join(data_dir, 'ImageSets/Main/{0}.txt'.format(split))
+        self.ids = [id_.strip() for id_ in open(id_list_file)]
+        self.data_dir = data_dir
+        self.ignore_difficult = False
+        self.normalize = tvtsf.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
         self.is_train = is_train
-        with open(path, 'r') as file:
-            self.img_paths = file.readlines()
-        # 根据图片的路径得到 label 的路径, label 的存储格式为一个图片对应一个.txt文件
-        # 文件的每一行代表了该图片的 box 信息, 其内容为: class_id, x, y, w, h (xywh都是用小数形式存储的,相对坐标)
-        self.label_paths = [path.replace('JPGImages', 'labels').replace('.jpg', '.txt') for path in self.img_paths]
+        self.ToTensor = tvtsf.ToTensor()
+    def __getitem__(self, i):
+        id_ = self.ids[i]
+        anno = ET.parse(os.path.join(self.data_dir, 'Annotations', id_ + '.xml'))
+        bbox = list()
+        label = list()
+        difficult = list()
+        for obj in anno.findall('object'):
+            if self.ignore_difficult and int(obj.find('difficult').text) == 1:
+                continue
+            difficult.append(int(obj.find('difficult').text))
+            bndbox_anno = obj.find('bndbox')
+            # subtract 1 to make pixel indexes 0-based
+            bbox.append([
+                int(bndbox_anno.find(tag).text) - 1
+                for tag in ('ymin', 'xmin', 'ymax', 'xmax')])
+            name = obj.find('name').text.lower().strip()
+            label.append(cls_list.index(name))
+        box = np.stack(bbox).astype(np.float32)
+        label = np.stack(label).astype(np.int32)
+        # When `use_difficult==False`, all elements in `difficult` are False.
+        difficult = np.array(difficult, dtype=np.bool).astype(np.uint8)  # PyTorch don't support np.bool
 
-    def __getitem__(self, index):
-        # 这里必须要加一个rstrip()去除txt文件每行末尾的\n换行,不然文件名会出错导致系统找不到路径,同理图片路径也是一样
-        label_path = self.label_paths[index].strip()
-        # label_data -> cls_id, ymin, xmin, ymax, xmax 绝对坐标
-        label_data = np.loadtxt(label_path, dtype=np.float32).reshape(-1, 5)
-        label = label_data[:, 0].astype(int)
-        box = label_data[:, 1:]
+        # Load a image
+        img_file = os.path.join(self.data_dir, 'JPEGImages', id_ + '.jpg')
 
-        # 上面是加载标签数据,下面加载图片数据以及相应的处理
-
-        img_path = self.img_paths[index].strip()
-        # 1.Image.open -> ndarray 注:PIL打开图片的方式默认为RGB格式,不需要再额外转换,但是PNG图片为四通道所以这里需要额外转换
-        # 2.ToTensor -> transpose(2, 0, 1)
-        #            -> torch.from_numpy
-        #            -> .div(255)
-        img = tvtsf.ToTensor()(Image.open(img_path).convert('RGB'))    # torch.float32
+        img = np.asarray(Image.open(img_file), dtype=np.float32).transpose((2, 0, 1))
+        img = img / 255.
+        # img = self.ToTensor(Image.open(img_file))  # 自带归一化
         in_c, in_h, in_w = img.shape
-        # 缩放到最小比例,这样最终长和宽都能放缩到规定的尺寸
+        # preprocess img 缩放到最小比例,这样最终长和宽都能放缩到规定的尺寸
         scale1 = 600 / min(in_h, in_w)
         scale2 = 1000 / max(in_h, in_w)
         scale = min(scale1, scale2)
         # resize到最小比例,anti_aliasing为是否采用高斯滤波 使用sk-learn的方式来resize
-        # img = sktsf.resize(img, (in_c, in_h * scale, in_w * scale), mode='reflect', anti_aliasing=False)  # np.float64
-
-        img = F.interpolate(img.unsqueeze(0), size=(round(in_h * scale), round(in_w * scale)), mode="nearest").squeeze(0)
+        out_h,out_w = in_h * scale, in_w * scale
+        img = sktsf.resize(img, (in_c, out_h, out_w), mode='reflect', anti_aliasing=False)  # np.float64
+        img = self.normalize(torch.from_numpy(img)).numpy()
+        # img = F.interpolate(img.unsqueeze(0), size=(round(out_h), round(out_w)), mode="nearest").squeeze(0)
+        # img = F.interpolate(img.unsqueeze(0), size=(round(out_h), round(out_w)), mode="bilinear",align_corners=True).squeeze(0)
         # transforms.Normalize使用如下公式进行归一化 value=(value-mean)/std,转换为[-1,1],caffe只有减去均值
-        img = tvtsf.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])(img)  # torch.float32
-        out_c, out_h, out_w = img.shape
+        # img = self.normalize(img).numpy()  # torch.float32
         if self.is_train:
             box *= scale
-            # 水平翻转 目前的任务场景中不太需要此功能
-            # 但是如果开启此功能,需要将后续返回的img替换为img.copy()
+            # 需要将后续返回的img替换为img.copy()
             # 因为给定numpy数组的某些步幅为负(img[:, ::-1, :]和img[:, :, ::-1])。numpy官方当前不支持此功能,但将来的版本中将添加此功能。
-            # img, params = util.random_flip(img, x_random=True, return_param=True)
-            # bbox = util.flip_bbox(bbox, (o_H, o_W), x_flip=params['x_flip'])
-            return img, box, label, scale
+            img, params = random_flip(img, x_random=True, return_param=True)
+            box = flip_bbox(box, (out_h, out_w), x_flip=params['x_flip'])
+            return img.copy(), box.copy(), label.copy(), scale
         else:
-            return img, (out_h, out_w), box, label
-
+            return img, (in_h, in_w), box, label, difficult
     def __len__(self):
-        return len(self.img_paths)
-
-
-# 为测试图片准备
-class ImageFolder(Dataset):
-    def __init__(self, folder_path):
-        self.files = glob.glob("%s/*.*" % folder_path)
-
-    def __getitem__(self, index):
-        img_path = self.files[index]
-        # 这里使用convert是防止使用png图片或其他格式时会有多个通道而引起的报错,
-        img = tvtsf.ToTensor()(Image.open(img_path).convert('RGB'))
-        in_c, in_h, in_w = img.shape
-        # img = preprocess(img)
-        # 缩放到最小比例,这样最终长和宽都能放缩到规定的尺寸
-        scale1 = 600 / min(in_h, in_w)
-        scale2 = 1000 / max(in_h, in_w)
-        scale = min(scale1, scale2)
-        img = F.interpolate(img.unsqueeze(0), size=(round(in_h * scale), round(in_w * scale)), mode="nearest").squeeze(0)
-        img = tvtsf.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])(img)
-        return img_path, img, img.shape[1:]
-
-    def __len__(self):
-        return len(self.files)
-
+        return len(self.ids)
 
 def flip_bbox(bbox, size, y_flip=False, x_flip=False):
     """
