@@ -9,6 +9,7 @@ from torch.hub import load_state_dict_from_url
 from torch.nn import functional as F
 from config import cfg
 from torchvision.ops import nms
+from torchvision.ops import RoIPool
 
 
 def decom_vgg16():
@@ -327,7 +328,8 @@ class RoIHead(nn.Module):
         normal_init(self.loc, 0, 0.001)
         normal_init(self.score, 0, 0.01)
         self.n_class = n_class
-
+        self.roi = RoIPool((7, 7), 1 / 16)
+        
     def forward(self, x, rois):
         """
         :param
@@ -349,7 +351,7 @@ class RoIHead(nn.Module):
         #    roi_list.append(roi_part)
         #pool = torch.cat(roi_list)              # torch.Size([128, 512, 7, 7])
         # 这里也可同样使用官方的roi_pool来代自适应池化,精度没什么变化但是速度变快
-         rois = torch.cat((torch.zeros((rois.shape[0], 1), device='cuda'), rois), 1)
+        rois = torch.cat((torch.zeros((rois.shape[0], 1), device='cuda'), rois), 1)
         rois = rois[:, [0, 2, 1, 4, 3]]  # ind, y x y x -> ind x y x y
         pool = self.roi(x, rois)
         pool = pool.reshape(pool.shape[0], -1)  # torch.Size([128, 25088])
@@ -397,5 +399,5 @@ def _fast_rcnn_loc_loss(pred_loc, gt_loc, gt_label, sigma):
     in_weight = torch.zeros(gt_loc.shape).cuda()
     in_weight[(gt_label > 0).reshape(-1, 1).expand_as(in_weight).cuda()] = 1
     loc_loss = _smooth_l1_loss(pred_loc, gt_loc, in_weight.detach(), sigma)
-    loc_loss /= ((gt_label > =0).sum().float())
+    loc_loss /= ((gt_label >= 0).sum().float())
     return loc_loss
