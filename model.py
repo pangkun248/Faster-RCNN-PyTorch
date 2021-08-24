@@ -117,11 +117,7 @@ class FasterRCNN(nn.Module):
         # 开始计算ROI_head网络的定位与分类损失
         roi_loc_loss = _fast_rcnn_loc_loss(head_loc, gt_head_loc, gt_head_label, self.roi_sigma)
         roi_cls_loss = F.cross_entropy(head_score, gt_head_label.cuda())
-        losses = {'rpn_loc_loss': rpn_loc_loss,
-                  'rpn_cls_loss': rpn_cls_loss,
-                  'roi_loc_loss': roi_loc_loss,
-                  'roi_cls_loss': roi_cls_loss, }
-        losses['total_loss'] = sum(losses.values())
+        losses = rpn_loc_loss + rpn_cls_loss + roi_loc_loss + roi_cls_loss
 
         return losses
 
