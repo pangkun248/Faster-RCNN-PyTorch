@@ -5,6 +5,7 @@ from model import FasterRCNN
 from torch.utils.data import DataLoader
 from utils import array_tool as at
 from utils.eval_tool import Eval
+from utils.chen_map import eval
 from terminaltables import AsciiTable
 import visdom
 import numpy as np
@@ -34,24 +35,26 @@ if __name__ == '__main__':
             loss['total_loss'].backward()
             model.optimizer.step()
         model.eval()
+        eval_result = eval(test_dataloader, model)
+        print('chen-mAP',eval_result['map'])
         # 每个Epoch计算一次mAP
-        ap_table = [["Index", "Class name", "Precision", "Recall", "AP", "F1-score"]]
+        #ap_table = [["Index", "Class name", "Precision", "Recall", "AP", "F1-score"]]
         eval_result = Eval(test_dataloader, model)
-        for p, r, ap, f1, cls_id in zip(*eval_result):
-            ap_table += [[cls_id+1, cfg.class_name[cls_id], "%.3f" % p, "%.3f" % r, "%.3f" % ap, "%.3f" % f1]]
-        print('\n' + AsciiTable(ap_table).table)
+        #for p, r, ap, f1, cls_id in zip(*eval_result):
+         #   ap_table += [[cls_id+1, cfg.class_name[cls_id], "%.3f" % p, "%.3f" % r, "%.3f" % ap, "%.3f" % f1]]
+        #print('\n' + AsciiTable(ap_table).table)
         eval_map = round(eval_result[2].mean(),4)
         print("Epoch %d/%d ---- mAP:%.4f Loss:%.4f" % (epoch, cfg.epoch, eval_map, loss['total_loss']))
         # 绘制mAP和Loss曲线
-        vis.line(X=np.array([epoch]), Y=np.array([eval_map]), win='mAP',
-                 update=None if epoch == 1 else 'append', opts=dict(title='mAP'))
-        vis.line(X=np.array([epoch]), Y=torch.tensor([loss['total_loss']]), win='Loss',
-                 update=None if epoch == 1 else 'append', opts=dict(title='Loss'))
+        #vis.line(X=np.array([epoch]), Y=np.array([eval_map]), win='mAP',
+         #        update=None if epoch == 1 else 'append', opts=dict(title='mAP'))
+        #vis.line(X=np.array([epoch]), Y=torch.tensor([loss['total_loss']]), win='Loss',
+        #         update=None if epoch == 1 else 'append', opts=dict(title='Loss'))
         model.train()
         # 保存目前最佳模型,每隔指定Epoch加载最佳模型,同时下调学习率
-        if eval_map > best_map:
-            best_map = eval_map
-            best_path = model.save(save_path=str(best_map))
+        #if eval_map > best_map:
+        #    best_map = eval_map
+        #    best_path = model.save(save_path=str(best_map))
         if epoch == 9:
-            model.load(best_path)
+        #    model.load(best_path)
             model.scale_lr(cfg.lr_decay)
