@@ -32,7 +32,7 @@ if __name__ == '__main__':
             img, target_box, target_label = img.cuda().float(), target_box.cuda(), target_label.cuda()
             model.optimizer.zero_grad()
             loss = model(img, target_box, target_label, scale)
-            loss['total_loss'].backward()
+            loss.backward()
             model.optimizer.step()
         model.eval()
         eval_result = eval(test_dataloader, model)
@@ -44,7 +44,7 @@ if __name__ == '__main__':
          #   ap_table += [[cls_id+1, cfg.class_name[cls_id], "%.3f" % p, "%.3f" % r, "%.3f" % ap, "%.3f" % f1]]
         #print('\n' + AsciiTable(ap_table).table)
         eval_map = round(eval_result[2].mean(),4)
-        print("Epoch %d/%d ---- mAP:%.4f Loss:%.4f" % (epoch, cfg.epoch, eval_map, loss['total_loss']))
+        print("Epoch %d/%d ---- mAP:%.4f Loss:%.4f" % (epoch, cfg.epoch, eval_map, loss))
         # 绘制mAP和Loss曲线
         #vis.line(X=np.array([epoch]), Y=np.array([eval_map]), win='mAP',
          #        update=None if epoch == 1 else 'append', opts=dict(title='mAP'))
