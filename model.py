@@ -8,6 +8,7 @@ from torch import nn
 from torch.hub import load_state_dict_from_url
 from torch.nn import functional as F
 from config import cfg
+from torchvision.ops import nms
 
 
 def decom_vgg16():
@@ -149,10 +150,9 @@ class FasterRCNN(nn.Module):
             roi = at.totensor(rois) / scale     # 将roi的坐标转换回原始图片尺寸上
 
             # chenyun版本的代码中是有对训练阶段的roi_locs进行归一化的,然后再在非训练状态下进行逆向归一化
-            # 我看不懂这里这样做的目的,注释掉之后也没有精度上的下降.
-            # mean = torch.Tensor(self.loc_normalize_mean).cuda().repeat(self.n_class)[None]
-            # std = torch.Tensor(self.loc_normalize_std).cuda().repeat(self.n_class)[None]
-            # roi_locs = (roi_locs * std + mean)  # 减均值除以方差的逆过程
+            mean = torch.Tensor(self.loc_normalize_mean).cuda().repeat(self.n_class)[None]
+            std = torch.Tensor(self.loc_normalize_std).cuda().repeat(self.n_class)[None]
+            roi_locs = (roi_locs * std + mean)  # 减均值除以方差的逆过程
 
             roi_locs = roi_locs.view(-1, self.n_class, 4)  # [300, self.n_class*4] -> [300, self.n_class, 4]
             roi = roi.view(-1, 1, 4).expand_as(roi_locs)   # [300, 1, 4] -> [300, self.n_class, 4]
@@ -163,10 +163,11 @@ class FasterRCNN(nn.Module):
             pred_boxes[:,:, 0::2].clamp_(min=0, max=size[0])
             pred_boxes[:,:, 1::2].clamp_(min=0, max=size[1])
             # 对roi_head网络预测的每类进行softmax处理
-            pred_scores = at.tonumpy(F.softmax(at.totensor(roi_scores), dim=1))
-
-            pred_boxes = at.tonumpy(pred_boxes)
-            pred_scores = at.tonumpy(pred_scores)
+           # pred_scores = at.tonumpy(F.softmax(at.totensor(roi_scores), dim=1))
+            pred_scores = F.softmax(at.totensor(roi_scores), dim=1)
+            
+            # pred_boxes = at.tonumpy(pred_boxes)
+            # pred_scores = at.tonumpy(pred_scores)
             # 每张图片的预测结果(m为预测目标的个数)     # (m, 4)  (m,)  (m,)
             pred_boxes, pred_label, pred_score = self._suppress(pred_boxes, pred_scores)
             boxes.append(pred_boxes)
@@ -204,24 +205,29 @@ class FasterRCNN(nn.Module):
             box_l = box_l[mask]
             score_l = score_l[mask]
             # 对cls_bbox_l根据prob_l重新从大到小排序,方便后面的NMS
-            order = score_l.ravel().argsort()[::-1]
-            box_l = box_l[order]
-            score_l = score_l[order]
-            if box_l.shape[0] == 0:
-                continue
-            pred_bbox_i,pred_score_i = NMS(box_l,score_l, cfg.nms_test)
-            box_list.append(pred_bbox_i)
+            #order = score_l.ravel().argsort()[::-1]
+            #box_l = box_l[order]
+            #score_l = score_l[order]
+            # if box_l.shape[0] == 0:
+            #    continue
+            #pred_bbox_i,pred_score_i = NMS(box_l,score_l, cfg.nms_test)
+            #box_list.append(pred_bbox_i)
             # 此时的label中的元素已经和config文件中类名的索引一致了,因为进行了-1操作
-            label_list.append((l - 1) * np.ones((len(pred_score_i),)))
-            score_list.append(pred_score_i)
+            #label_list.append((l - 1) * np.ones((len(pred_score_i),)))
+            #score_list.append(pred_score_i)
+            # 这里将nms放在GPU上计算并使用官方nms速度会快很多
+            keep = nms(box_l, score_l, self.nms_thresh)
+            box_list.append(box_l[keep].cpu().numpy())
+            label_list.append((l - 1) * np.ones((len(keep),)))
+            score_list.append(score_l[keep].cpu().numpy())
         # 如果对一张图片没有预测出满足条件的box,那么则返回一个空的数据
-        if not box_list:
-            return np.array([]), np.array([]), np.array([]),
-        else:
-            box_np = np.concatenate(box_list, axis=0).astype(np.float32)
-            label_np = np.concatenate(label_list, axis=0).astype(np.int32)
-            score_np = np.concatenate(score_list, axis=0).astype(np.float32)
-            return box_np, label_np, score_np
+        #if not box_list:
+        #   return np.array([]), np.array([]), np.array([]),
+        #else:
+        box_np = np.concatenate(box_list, axis=0).astype(np.float32)
+        label_np = np.concatenate(label_list, axis=0).astype(np.int32)
+        score_np = np.concatenate(score_list, axis=0).astype(np.float32)
+        return box_np, label_np, score_np
 
     def get_optimizer(self):
         # 获取梯度更新的方式,以及 放大 对网络权重中 偏置项 的学习率
@@ -335,17 +341,21 @@ class RoIHead(nn.Module):
             roi_locs    : RoIHead网络提供的roi修正系数     -> torch.Size([128, self.n_class*4])
             roi_scores  : RoIHead网络提供的roi各类置信度   -> torch.Size([128, self.n_class])
         """
-        rois = at.totensor(rois).float()
-        roi_list = []
-        for roi in rois:
-            roi_part = x[:,:,(roi[0]/16).int():(roi[2]/16).int()+1,(roi[1]/16).int():(roi[3]/16).int()+1]
+        rois = at.totensor(rois)
+        # roi_list = []
+        #for roi in rois:
+        #   roi_part = x[:,:,(roi[0]/16).int():(roi[2]/16).int()+1,(roi[1]/16).int():(roi[3]/16).int()+1]
             # 注意AdaptiveMaxPool2d这个自适应Maxpooling的方法有两个参数 1.output_size(输出尺寸) 2.return_indices(默认False)
             # 第二个参数应该是返回最大值在原数据中的索引,output_size参数类型为元组形式的如(4,5)或者单一数字4,等价于(4,4)
             # 但是如果你输入了两个int参数如4,4那么会自动将第二个4视作True -> return_indices为True同理参数为4,0 return_indices则为False
             # 该函数的更多用法请参考源码.
-            roi_part = nn.AdaptiveMaxPool2d((7,7))(roi_part)
-            roi_list.append(roi_part)
-        pool = torch.cat(roi_list)              # torch.Size([128, 512, 7, 7])
+        #    roi_part = nn.AdaptiveMaxPool2d((7,7))(roi_part)
+        #    roi_list.append(roi_part)
+        #pool = torch.cat(roi_list)              # torch.Size([128, 512, 7, 7])
+        # 这里也可同样使用官方的roi_pool来代自适应池化,精度没什么变化但是速度变快
+         rois = torch.cat((torch.zeros((rois.shape[0], 1), device='cuda'), rois), 1)
+        rois = rois[:, [0, 2, 1, 4, 3]]  # ind, y x y x -> ind x y x y
+        pool = self.roi(x, rois)
         pool = pool.reshape(pool.shape[0], -1)  # torch.Size([128, 25088])
         fc7 = self.classifier(pool)             # torch.Size([128, 4096])
         roi_locs = self.loc(fc7)
@@ -391,5 +401,5 @@ def _fast_rcnn_loc_loss(pred_loc, gt_loc, gt_label, sigma):
     in_weight = torch.zeros(gt_loc.shape).cuda()
     in_weight[(gt_label > 0).reshape(-1, 1).expand_as(in_weight).cuda()] = 1
     loc_loss = _smooth_l1_loss(pred_loc, gt_loc, in_weight.detach(), sigma)
-    loc_loss /= ((gt_label > 0).sum().float())
+    loc_loss /= ((gt_label > =0).sum().float())
     return loc_loss
