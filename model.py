@@ -71,7 +71,7 @@ class FasterRCNN(nn.Module):
         img_size = x.shape[2:]
         features = self.extractor(x)
         # 这里把一个batch(虽然为1)中的所有roi都放在一起了,用roi_indices来代表其所属batch的index
-        # 1.torch.Size([1, 16650, 4]) 2.torch.Size([1, 16650, 2]) 3.(200, 4) 4.(200,) 5.(16650, 4)
+        # [1, 16650, 4] [1, 16650, 2] [2000, 4] [2000,] [16650, 4]
         rpn_locs, rpn_scores, rois, roi_indices, anchor = self.rpn(features, img_size, scale,is_train)
         # 非训练阶段
         if not is_train:
@@ -103,7 +103,7 @@ class FasterRCNN(nn.Module):
         gt_rpn_label = at.totensor(gt_rpn_label).long()
         gt_rpn_loc = at.totensor(gt_rpn_loc)
         rpn_loc_loss = _fast_rcnn_loc_loss(rpn_loc, gt_rpn_loc, gt_rpn_label, self.rpn_sigma)
-        # 开始计算RPN网络的分类损失,忽略那些label为-1的(是因为太多了不得不舍弃)
+        # 开始计算RPN网络的分类损失,忽略那些label为-1的
         rpn_cls_loss = F.cross_entropy(rpn_score, gt_rpn_label.cuda(), ignore_index=-1)
 
         # ------------------计算 ROI_head losses -------------------#
@@ -197,7 +197,7 @@ class FasterRCNN(nn.Module):
         for l in range(1, self.n_class):
             box_l = pred_boxes[:, l, :]  # torch.Size([300, 1, 4])
             score_l = pred_scores[:, l]             # torch.Size([300])
-            # 首先过滤掉那些类得分低于self.score_thresh(0.7)的
+            # 首先过滤掉那些类得分低于self.score_thresh的
             mask = score_l > self.score_thresh
             box_l = box_l[mask]
             score_l = score_l[mask]
