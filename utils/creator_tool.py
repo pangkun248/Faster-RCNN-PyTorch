@@ -58,6 +58,7 @@ class ProposalCreator:
         score = score[order]
         # roi,score = NMS(roi, score, cfg.nms_rpn)
         # roi = roi[:n_post_nms]
+        # TODO 转为tensor 进行nms
         keep = nms(torch.from_numpy(roi).cuda(), torch.from_numpy(score).cuda(), self.nms_thresh)
         keep = keep[:n_post_nms]
         roi = roi[keep.cpu().numpy()]
@@ -72,7 +73,7 @@ class AnchorTargetCreator(object):
     先从基础anchor中提取出内部框的索引 inside_index,并修改基础anchor为内部anchor.
     计算anchor与target_boxes的iou值,返回每个anchor与target_boxes的最大iou索引argmax_ious以及满足iou条件的不超过256个的正负样本索引
     创建一个默认值为 -1的长度为len(anchor)的基础label,并根据前面得到的正负样本的索引,分别给label中正样本赋1负样本赋0
-    根据target_box与前一步得到的argmax_ious求出与anchor最匹配的target_box,然后求出真实修正系数
+    根据target_box与前一步得到的argmax_ious求出与target_box最匹配的anchor,然后求出真实修正系数
     最后将在内部anchor上求出的内部loc与内部label映射回基础loc(除内部loc外默认为0)与基础label(除内部label外默认为-1)上,
     最终返回基础loc与基础label
     """
@@ -182,12 +183,12 @@ class ProposalTargetCreator(object):
         :param loc_normalize_std: 坐标的标准方差
         :return: 128(理论)个正负样本roi的坐标, roi与target_box修正系数, 128(理论)个正负样本roi的label
         """
-        # n_bbox, _ = target_box.shape
-        # 这里将target_box也并入到roi中去
+        # 这里将target_box也并入到roi中去 这里可以将roi当做RPN阶段的"anchor",只不过是动态的,
+        # 将target_box添加到roi中是为了更好的收敛ROIHead网络而做的操作,训练初期RPN阶段提供的roi不管是从质量还是数量来说都不高,这里算是弥补了一些
         roi = np.concatenate((roi, target_box), axis=0)
         pos_roi_per_image = np.round(self.n_sample * self.pos_ratio)
         iou = box_iou(roi, target_box)
-        # 每个roi和tartget_boxes的最大iou索引
+        # 每个roi和target_boxes的最大iou索引
         gt_assignment = iou.argmax(axis=1)
         # 每个roi和n个tartget_box的最大iou
         max_iou = iou.max(axis=1)
@@ -201,6 +202,7 @@ class ProposalTargetCreator(object):
             pos_index = np.random.choice(pos_index, size=pos_roi_per_this_image, replace=False)
 
         # 获取那些IOU在[neg_iou_thresh_lo, neg_iou_thresh_hi)区间的roi索引
+        # 其实这里感觉分配的不是很合理,因为IOU=0.49与0.51在数值上区别很小.人眼更是几乎看不出来(除非写轮眼) TODO 待实验 hi↑ lo↓
         neg_index = np.where((max_iou < self.neg_iou_thresh_hi) & (max_iou >= self.neg_iou_thresh_lo))[0]
         # 计算每张图片中理论上的负样本个数
         neg_roi_per_this_image = self.n_sample - pos_roi_per_this_image
