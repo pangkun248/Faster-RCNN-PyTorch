@@ -21,3 +21,9 @@ mine:使用我自己重写的方法计算mAP
 测试集： test.txt
 
 训练:config文件修数据集路径之后直接运行train.py即可训练
+
+**TODO**
+
+* batch size >1
+
+* 训练代码全部更换为tensor
