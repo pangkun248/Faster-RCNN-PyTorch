@@ -1,7 +1,7 @@
 class Config:
     # 训练集路径,验证集路径(mAP相关)
-    train_dir = r'D:\py_pro\Faster-RCNN-PyTorch\data\wenyi\train.txt'
-    val_dir = r'D:\py_pro\Faster-RCNN-PyTorch\data\wenyi\val.txt'
+    train_dir = 'VOC2007文件夹路径'
+    val_dir = 'VOC2007文件夹路径'
     # 图片最大与最小输入长宽尺寸
     max_size = 1000
     min_size = 600
