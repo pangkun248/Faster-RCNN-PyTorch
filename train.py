@@ -15,7 +15,7 @@ if __name__ == '__main__':
     # 准备训练与验证数据
     trainset = ListDataset(cfg.train_dir,is_train=True)
     dataloader = DataLoader(trainset, batch_size=1, shuffle=True, num_workers=cfg.num_workers)
-    testset = ListDataset(cfg.val_dir, is_train=False)
+    testset = ListDataset(cfg.val_dir, split='test', is_train=False)
     test_dataloader = DataLoader(testset, batch_size=1, num_workers=cfg.test_num_workers, pin_memory=True)
     # 加载模型与权重
     model = FasterRCNN().cuda()
