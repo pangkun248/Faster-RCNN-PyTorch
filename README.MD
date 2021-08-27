@@ -26,4 +26,4 @@ mine:使用我自己重写的方法计算mAP
 
 * batch size >1
 
-* 训练代码全部更换为tensor
+* 优化结构
