@@ -1,7 +1,7 @@
 import torch
 import numpy as np
 from utils import array_tool as at
-from utils.box_tools import loc2box, create_anchor_all, generate_anchor_base
+from utils.box_tools import loc2box, create_anchor_all, generate_anchor_base,loc2box_torch
 from torchvision.models import vgg16
 from utils.creator_tool import AnchorTargetCreator, ProposalTargetCreator, ProposalCreator, NMS
 from torch import nn
@@ -57,14 +57,14 @@ class FasterRCNN(nn.Module):
         self.rpn = RegionProposalNetwork()
         self.head = RoIHead(n_class=self.n_class, classifier=classifier)
         self.nms_thresh = 0.3
-        self.loc_normalize_mean = (0., 0., 0., 0.)
-        self.loc_normalize_std = (0.1, 0.1, 0.2, 0.2)
         self.rpn_sigma = cfg.rpn_sigma
         self.roi_sigma = cfg.roi_sigma
         # 为RPN及ROI_Head网络准备的 AnchorTargetCreator ProposalTargetCreator 优化方式
         self.anchor_target_creator = AnchorTargetCreator()
         self.proposal_target_creator = ProposalTargetCreator()
         self.optimizer = self.get_optimizer()
+        self.mean = torch.Tensor((0., 0., 0., 0.)).cuda().repeat(self.n_class)[None]
+        self.std = torch.Tensor((0.1, 0.1, 0.2, 0.2)).cuda().repeat(self.n_class)[None]
 
     def forward(self, x, target_boxes=None, target_labels=None, scale=1.,is_train=True):
         self.score_thresh = 0.7 if is_train else 0.05
@@ -74,7 +74,7 @@ class FasterRCNN(nn.Module):
         # [1, 16650, 4] [1, 16650, 2] [2000, 4] [2000,] [16650, 4]
         rpn_locs, rpn_scores, rois, roi_indices, anchor = self.rpn(features, img_size, scale,is_train)
         # 非训练阶段
-        if not is_train:
+        if not self.training:
             # (300, self.n_class*4) (300, self.n_class)  这个300只是nms后的一个过滤值,参考ProposalCreator中的参数
             roi_locs, roi_scores = self.head(features, rois)
             return roi_locs, roi_scores, rois
@@ -84,24 +84,27 @@ class FasterRCNN(nn.Module):
         rpn_score = rpn_scores[0]
         rpn_loc = rpn_locs[0]
         roi = rois
-
         # 为训练ROI_head 网络准备的ProposalTargetCreator
         # (128, 4)  (128, 4)     (128,)
         sample_roi, gt_head_loc, gt_head_label = self.proposal_target_creator(
             roi,  # (2000,4)
-            at.tonumpy(target_box),
-            at.tonumpy(target_label),
-            self.loc_normalize_mean,
-            self.loc_normalize_std)
+            # at.tonumpy(target_box),
+            target_box,
+            target_label,
+            # at.tonumpy(target_label),
+            )
         # (128, self.n_class*4) (128, self.n_class)
         head_loc, head_score = self.head(features, sample_roi)
 
         # ------------------ 计算 RPN losses -------------------#
         # 开始计算RPN网络的定位损失
-        gt_rpn_loc, gt_rpn_label = self.anchor_target_creator(at.tonumpy(target_box), anchor, img_size)
+        # gt_rpn_loc, gt_rpn_label = self.anchor_target_creator(at.tonumpy(target_box), anchor, img_size)
+        gt_rpn_loc, gt_rpn_label = self.anchor_target_creator(target_box, anchor, img_size)
         # 这里使用long类型因为下面cross_entropy方法需要
-        gt_rpn_label = at.totensor(gt_rpn_label).long()
-        gt_rpn_loc = at.totensor(gt_rpn_loc)
+        gt_rpn_label = gt_rpn_label.long()
+        # gt_rpn_label = at.totensor(gt_rpn_label).long()
+        # gt_rpn_loc = at.totensor(gt_rpn_loc)
+        # gt_rpn_loc = at.totensor(gt_rpn_loc)
         rpn_loc_loss = _fast_rcnn_loc_loss(rpn_loc, gt_rpn_loc, gt_rpn_label, self.rpn_sigma)
         # 开始计算RPN网络的分类损失,忽略那些label为-1的
         rpn_cls_loss = F.cross_entropy(rpn_score, gt_rpn_label.cuda(), ignore_index=-1)
@@ -147,13 +150,12 @@ class FasterRCNN(nn.Module):
             roi = at.totensor(rois) / scale     # 将roi的坐标转换回原始图片尺寸上
 
             # chenyun版本的代码中是有对训练阶段的roi_locs进行归一化的,然后再在非训练状态下进行逆向归一化
-            mean = torch.Tensor(self.loc_normalize_mean).cuda().repeat(self.n_class)[None]
-            std = torch.Tensor(self.loc_normalize_std).cuda().repeat(self.n_class)[None]
-            roi_locs = (roi_locs * std + mean)  # 减均值除以方差的逆过程
+            roi_locs = (roi_locs * self.std + self.mean)  # 减均值除以方差的逆过程
 
             roi_locs = roi_locs.view(-1, self.n_class, 4)  # [300, self.n_class*4] -> [300, self.n_class, 4]
             roi = roi.view(-1, 1, 4).expand_as(roi_locs)   # [300, 1, 4] -> [300, self.n_class, 4]
-            pred_boxes = loc2box(at.tonumpy(roi).reshape((-1, 4)),at.tonumpy(roi_locs).reshape((-1, 4)))
+            # pred_boxes = loc2box(at.tonumpy(roi).reshape((-1, 4)),at.tonumpy(roi_locs).reshape((-1, 4)))
+            pred_boxes = loc2box_torch(roi.reshape(-1, 4),roi_locs.reshape(-1, 4))
             pred_boxes = at.totensor(pred_boxes)  # torch.Size([5700, 4])
             pred_boxes = pred_boxes.view(-1, self.n_class, 4)   # (300*self.n_class, 4) -> (300, self.n_class, 4)
             # 限制预测框的坐标范围
@@ -214,17 +216,24 @@ class FasterRCNN(nn.Module):
             #score_list.append(pred_score_i)
             # 这里将nms放在GPU上计算并使用官方nms速度会快很多
             keep = nms(box_l, score_l, self.nms_thresh)
-            box_list.append(box_l[keep].cpu().numpy())
-            label_list.append((l - 1) * np.ones((len(keep),)))
-            score_list.append(score_l[keep].cpu().numpy())
+            # box_list.append(box_l[keep].cpu().numpy())
+            box_list.append(box_l[keep])
+            # label_list.append((l - 1) * np.ones((len(keep),)))
+            label_list.append((l - 1) * torch.ones_like(keep))
+            # score_list.append(score_l[keep].cpu().numpy())
+            score_list.append(score_l[keep])
         # 如果对一张图片没有预测出满足条件的box,那么则返回一个空的数据
         #if not box_list:
         #   return np.array([]), np.array([]), np.array([]),
         #else:
-        box_np = np.concatenate(box_list, axis=0).astype(np.float32)
-        label_np = np.concatenate(label_list, axis=0).astype(np.int32)
-        score_np = np.concatenate(score_list, axis=0).astype(np.float32)
-        return box_np, label_np, score_np
+        # box_np = np.concatenate(box_list, axis=0).astype(np.float32)
+        # label_np = np.concatenate(label_list, axis=0).astype(np.int32)
+        # score_np = np.concatenate(score_list, axis=0).astype(np.float32)
+        box = torch.cat(box_list, dim=0).cpu().numpy()
+        label = torch.cat(label_list, dim=0).cpu().numpy()
+        score = torch.cat(score_list, dim=0).cpu().numpy()
+        # return box_np, label_np, score_np
+        return box, label, score
 
     def get_optimizer(self):
         # 获取梯度更新的方式,以及 放大 对网络权重中 偏置项 的学习率
@@ -274,8 +283,11 @@ class RegionProposalNetwork(nn.Module):
     def __init__(self):
         super(RegionProposalNetwork, self).__init__()
         # 生成9种中心坐标为(8,8)的不同长宽不同面积的anchor坐标
-        self.anchor_base = generate_anchor_base()
         self.feat_stride = 16
+        self.ratios = torch.Tensor([0.5, 1, 2])
+        self.anchor_scales = torch.Tensor([8, 16, 32])
+        self.anchor_base = None
+        self.generate_anchor_base_torch()  # 生成9种基础anchor
         self.proposal_layer = ProposalCreator(self)
         self.anchor_types = self.anchor_base.shape[0]
         # 初始化RPN网络的三个卷积层及其权重
@@ -289,7 +301,8 @@ class RegionProposalNetwork(nn.Module):
     def forward(self, x, img_size, scale=1.,is_train=True):
         batch_size, channels, hh, ww = x.shape
         # 将整个输入图片内都布满anchor
-        anchor = create_anchor_all(np.array(self.anchor_base),self.feat_stride, hh, ww)
+        # anchor = create_anchor_all(np.array(self.anchor_base), self.feat_stride, hh, ww)
+        anchor = self.create_anchor_all_torch(hh, ww)
         x = F.relu(self.conv1(x))
         rpn_locs = self.loc(x)  # batch_size,36,h,w
         rpn_scores = self.score(x)  # batch_size,18,h,w
@@ -306,16 +319,59 @@ class RegionProposalNetwork(nn.Module):
         for i in range(batch_size):
             # proposal_layer:利用rpn_loc与基础anchor得到roi,限制roi的xywh范围,
             # 按rpn_fg_scores大小截取前n个roi进行nms,截取前m个roi返回(n,m在训练与测试时不同)
-            roi = self.proposal_layer(rpn_locs[i].cpu().detach().numpy(),
-                                      rpn_fg_scores[i].cpu().detach().numpy(),
-                                      anchor, img_size,scale=scale,is_train=is_train)
-            batch_index = i * np.ones((len(roi),), dtype=np.int32)
+            roi = self.proposal_layer(rpn_locs[i].detach(),  # 这里要截断梯度
+                                      rpn_fg_scores[i].detach(),
+                                      anchor, img_size,scale=scale)
+            # batch_index = i * np.ones((len(roi),), dtype=np.int32)
             rois.append(roi)
-            roi_indices.append(batch_index)
+            # roi_indices.append(batch_index)
 
-        rois = np.concatenate(rois, axis=0)
-        roi_indices = np.concatenate(roi_indices, axis=0)
+        # rois = np.concatenate(rois, axis=0)
+        rois = torch.cat(rois, dim=0)
+        # roi_indices = np.concatenate(roi_indices, axis=0)
         return rpn_locs, rpn_scores, rois, roi_indices, anchor
+
+    def generate_anchor_base_torch(self):
+        """
+        生成基础的9种长宽、面积比的anchor坐标 坐标形式x1y1x2y2
+        feat_stride: 特征提取网络下采样的倍数,这里默认是vgg16
+        ratios: 三种长宽比
+        anchor_scales: 和 base_size组成三种面积 (16*8)**2 (16*16)**2 (16*32)**2 意味着最大anchor在原图中的面积为512*512
+        生成9种基础anchor
+        """
+        ratio_num = len(self.ratios)
+        scale_num = len(self.anchor_scales)
+
+        py = self.feat_stride / 2.
+        px = self.feat_stride / 2.
+        self.anchor_base = torch.zeros((ratio_num * scale_num, 4), dtype=torch.float32,device='cuda')
+        for i in range(ratio_num):
+            for j in range(scale_num):
+                h = self.feat_stride * self.anchor_scales[j] * torch.sqrt(self.ratios[i])
+                w = self.feat_stride * self.anchor_scales[j] * torch.sqrt(1. / self.ratios[i])
+                # 每个特征点是基于box中心进行生成anchor的
+                index = i * len(self.anchor_scales) + j
+                self.anchor_base[index, 0] = py - h / 2.
+                self.anchor_base[index, 1] = px - w / 2.
+                self.anchor_base[index, 2] = py + h / 2.
+                self.anchor_base[index, 3] = px + w / 2.
+
+    def create_anchor_all_torch(self, feature_h, feature_w):
+        """
+        生成相对于整张图片来说的全部anchors
+        :param feature_h:经过特征提取网络之后的features的高
+        :param feature_w:经过特征提取网络之后的features的宽
+        :return:布满整张图片的所有anchors
+        """
+        shift_y = torch.arange(0, feature_h * self.feat_stride, self.feat_stride, dtype=torch.float32,device='cuda')
+        shift_x = torch.arange(0, feature_w * self.feat_stride, self.feat_stride, dtype=torch.float32,device='cuda')
+        shift_y, shift_x = torch.meshgrid(shift_y, shift_x)
+        # 这里生成的是左上角和右下角的坐标都在每个特征点左上角(需要后面拉伸开来)共(feature_h*feature_w)个anchor的坐标(yxyx形式)
+        # 后面加上以特征点为中心点并且有不同面积长宽比的anchor坐标之后就成了完整的分布在fetures中的anchors
+        shift = torch.stack((torch.flatten(shift_y), torch.flatten(shift_x)), 1).repeat(1, 2)
+        anchor = self.anchor_base + shift[:, None, :]  # (9,4) + (1850, 1, 4) = (1850, 9, 4) np.float32
+        anchor = anchor.reshape((-1, 4))  # (16650, 4)
+        return anchor
 
 
 class RoIHead(nn.Module):
@@ -339,7 +395,7 @@ class RoIHead(nn.Module):
             roi_locs    : RoIHead网络提供的roi修正系数     -> torch.Size([128, self.n_class*4])
             roi_scores  : RoIHead网络提供的roi各类置信度   -> torch.Size([128, self.n_class])
         """
-        rois = at.totensor(rois)
+        # rois = at.totensor(rois)
         # roi_list = []
         #for roi in rois:
         #   roi_part = x[:,:,(roi[0]/16).int():(roi[2]/16).int()+1,(roi[1]/16).int():(roi[3]/16).int()+1]
