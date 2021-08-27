@@ -1,4 +1,5 @@
 import numpy as np
+import torch
 
 
 def loc2box(src_box, loc):
@@ -19,10 +20,6 @@ def loc2box(src_box, loc):
         修正后的^G_box->shape为(R, 4),R是预测的框数量
         第二维度的数据形式与src_bbox相同
     """
-    if src_box.shape[0] == 0:
-        return np.zeros((0, 4), dtype=loc.dtype)
-
-    src_box = src_box.astype(src_box.dtype, copy=False)
     # 转换坐标格式 x1y1x2y2 -> xywh
     src_h = src_box[:, 2] - src_box[:, 0]
     src_w = src_box[:, 3] - src_box[:, 1]
@@ -42,6 +39,51 @@ def loc2box(src_box, loc):
 
     # 转换坐标格式 xywh -> x1y1x2y2
     dst_box = np.zeros(loc.shape, dtype=loc.dtype)
+    dst_box[:, 0] = dst_y - 0.5 * dst_h
+    dst_box[:, 1] = dst_x - 0.5 * dst_w
+    dst_box[:, 2] = dst_y + 0.5 * dst_h
+    dst_box[:, 3] = dst_x + 0.5 * dst_w
+
+    return dst_box
+
+
+def loc2box_torch(src_box, loc):
+    """
+    已知预测框和修正参数,求目标框
+    利用平移和尺度放缩修正P_box以得到 ^G_box 然后将^G_box与G_box进行计算损失
+    参考 https://blog.csdn.net/zijin0802034/article/details/77685438/
+    ^G_box计算方式
+    ^G_box_y = p_h*t_y + p_y`
+    ^G_box_x = p_w*t_x + p_x`
+    ^G_box_h = p_h*exp(t_h)`
+    ^G_box_w = p_w*exp(t_w)`
+    参数:
+        src_bbox (array): `p_{ymin}, p_{xmin}, p_{ymax}, p_{xmax}`. (R,4)
+        loc (array): `t_y, t_x, t_h, t_w`.  (R,4)
+
+    返回:
+        修正后的^G_box->shape为(R, 4),R是预测的框数量
+        第二维度的数据形式与src_bbox相同
+    """
+    # 转换坐标格式 x1y1x2y2 -> xywh
+    src_h = src_box[:, 2] - src_box[:, 0]
+    src_w = src_box[:, 3] - src_box[:, 1]
+    src_y = src_box[:, 0] + 0.5 * src_h
+    src_x = src_box[:, 1] + 0.5 * src_w
+
+    # 各个修正系数
+    # dy = loc[:, 0]
+    # dx = loc[:, 1]
+    # dh = loc[:, 2]
+    # dw = loc[:, 3]
+
+    dst_y = loc[:, 0] * src_h + src_y
+    dst_x = loc[:, 1] * src_w + src_x
+    dst_h = torch.exp(loc[:, 2]) * src_h
+    dst_w = torch.exp(loc[:, 3]) * src_w
+
+    # 转换坐标格式 xywh -> x1y1x2y2
+    dst_box = torch.zeros(loc.shape, dtype=loc.dtype, device='cuda')
     dst_box[:, 0] = dst_y - 0.5 * dst_h
     dst_box[:, 1] = dst_x - 0.5 * dst_w
     dst_box[:, 2] = dst_y + 0.5 * dst_h
@@ -76,6 +118,32 @@ def box2loc(src_box, dst_box):
     return loc
 
 
+def box2loc_torch(src_box, dst_box):
+    """
+    已知真实框和预测框求出其修正参数
+    :param src_box: shape -> (R, 4) x1y1x2y2.
+    :param dst_box: 同上
+    :return: 修正系数 shape -> (R, 4)
+    """
+    src_h = src_box[:, 2] - src_box[:, 0]
+    src_w = src_box[:, 3] - src_box[:, 1]
+    src_y = src_box[:, 0] + 0.5 * src_h
+    src_x = src_box[:, 1] + 0.5 * src_w
+
+    dst_h = dst_box[:, 2] - dst_box[:, 0]
+    dst_w = dst_box[:, 3] - dst_box[:, 1]
+    dst_y = dst_box[:, 0] + 0.5 * dst_h
+    dst_x = dst_box[:, 1] + 0.5 * dst_w
+
+    dy = (dst_y - src_y) / (src_h + 1e-8)
+    dx = (dst_x - src_x) / (src_w + 1e-8)
+    dh = torch.log(dst_h / (src_h + 1e-8))
+    dw = torch.log(dst_w / (src_w + 1e-8))
+
+    loc = torch.stack((dy, dx, dh, dw), dim=1)
+    return loc
+
+
 def box_iou(box_a, box_b):
     # 计算 N个box与M个box的iou需要使用到numpy的广播特性
     # tl为交叉部分左上角坐标最大值, tl.shape -> (N,M,2)
@@ -92,7 +160,23 @@ def box_iou(box_a, box_b):
     return iou
 
 
-def generate_anchor_base(base_size=16, ratios=[0.5, 1, 2],anchor_scales=[8, 16, 32]):
+def box_iou_torch(box_a, box_b):
+    # 计算 N个box与M个box的iou需要使用到numpy的广播特性
+    # tl为交叉部分左上角坐标最大值, tl.shape -> (N,M,2)
+    tl = torch.max(box_a[:, None, :2], box_b[:, :2])
+    # br为交叉部分右下角坐标最小值
+    br = torch.min(box_a[:, None, 2:], box_b[:, 2:])
+    # 第一个axis是指定某一个box内宽高进行相乘,第二个axis是筛除那些没有交叉部分的box
+    # 这个 < 和 all(axis=2) 是为了保证右下角的xy坐标必须大于左上角的xy坐标,否则最终没有重合部分的box公共面积为0
+    area_i = torch.prod(br - tl, dim=2) * (tl < br).all(dim=2)
+    # 分别计算bbox_a,bbox_b的面积,以及最后的iou
+    area_a = torch.prod(box_a[:, 2:] - box_a[:, :2], dim=1)
+    area_b = torch.prod(box_b[:, 2:] - box_b[:, :2], dim=1)
+    iou = area_i / (area_a[:, None] + area_b - area_i)
+    return iou
+
+
+def generate_anchor_base():
     """
     生成基础的9种长宽、面积比的anchor坐标 坐标形式x1y1x2y2
     :param base_size: 特征提取网络下采样的倍数,这里默认是vgg16
@@ -100,6 +184,10 @@ def generate_anchor_base(base_size=16, ratios=[0.5, 1, 2],anchor_scales=[8, 16, 
     :param anchor_scales: 和 base_size组成三种面积 (16*8)**2 (16*16)**2 (16*32)**2 意味着最大anchor在原图中的面积为512*512
     :return:生成好的9种基础anchor
     """
+    base_size = 16
+    ratios = [0.5, 1, 2]
+    anchor_scales = [8, 16, 32]
+
     py = base_size / 2.
     px = base_size / 2.
     anchor_base = np.zeros((len(ratios) * len(anchor_scales), 4),dtype=np.float32)
@@ -141,6 +229,7 @@ def create_anchor_all(anchor_base, feat_stride, height, width):
     return anchor
 
 
+
 def _get_inside_index(anchor, h, w):
     # 返回那些在指定大小的图片内部的anchor索引
     index_inside = np.where(
@@ -149,6 +238,17 @@ def _get_inside_index(anchor, h, w):
         (anchor[:, 2] <= h) &
         (anchor[:, 3] <= w)
     )[0]
+    return index_inside
+
+
+def _get_inside_index_torch(anchor, h, w):
+    # 返回那些在指定大小的图片内部的anchor索引
+    index_inside = torch.nonzero(
+        (anchor[:, 0] >= 0) &
+        (anchor[:, 1] >= 0) &
+        (anchor[:, 2] <= h) &
+        (anchor[:, 3] <= w)
+    ).squeeze()
     return index_inside
 
 
@@ -163,6 +263,18 @@ def _unmap(data, n_anchor, inside_index):
         ret[inside_index] = data
     return ret
 
+
+def _unmap_torch(data, anchor, inside_index):
+    if len(data.shape) == 1:
+        # 如果是对label进行映射,则默认值为-1(忽略样本)
+        ret = torch.full_like(anchor[:,0],fill_value=-1, dtype=torch.int32)
+        ret[inside_index] = data
+    else:
+        # 如果是对loc进行映射,则默认值为0(忽略样本)
+        # ret = np.zeros((n_anchor, 4), dtype=np.float32)
+        ret = torch.zeros_like(anchor)
+        ret[inside_index] = data
+    return ret
 
 def NMS(box,score, nms_thres):
     keep_boxes = []
