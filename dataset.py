@@ -1,3 +1,4 @@
+import cv2
 import torch
 from torch.utils.data import Dataset
 from torchvision import transforms as tvtsf
@@ -9,19 +10,24 @@ import glob
 import xml.etree.ElementTree as ET
 import os
 from skimage import transform as sktsf
-cls_list = ('aeroplane', 'bicycle','bird','boat', 'bottle', 'bus', 'car', 'cat', 'chair','cow', 'diningtable',
-            'dog', 'horse', 'motorbike','person', 'pottedplant',  'sheep', 'sofa',  'train', 'tvmonitor')
+import time
+
+
+cls_list = ('aeroplane', 'bicycle', 'bird', 'boat', 'bottle', 'bus', 'car', 'cat', 'chair', 'cow', 'diningtable',
+            'dog', 'horse', 'motorbike', 'person', 'pottedplant', 'sheep', 'sofa', 'train', 'tvmonitor')
 
 
 class ListDataset(Dataset):
-    def __init__(self, data_dir, split='trainval',is_train=False):
+    def __init__(self, data_dir, split='trainval', is_train=False):
         id_list_file = os.path.join(data_dir, 'ImageSets/Main/{0}.txt'.format(split))
         self.ids = [id_.strip() for id_ in open(id_list_file)]
         self.data_dir = data_dir
-        self.ignore_difficult = False
+        self.ignore_difficult = is_train
         self.normalize = tvtsf.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
         self.is_train = is_train
         self.ToTensor = tvtsf.ToTensor()
+        self.sort_img()
+
     def __getitem__(self, i):
         id_ = self.ids[i]
         anno = ET.parse(os.path.join(self.data_dir, 'Annotations', id_ + '.xml'))
@@ -56,7 +62,7 @@ class ListDataset(Dataset):
         scale2 = 1000 / max(in_h, in_w)
         scale = min(scale1, scale2)
         # resize到最小比例,anti_aliasing为是否采用高斯滤波 使用sk-learn的方式来resize
-        out_h,out_w = in_h * scale, in_w * scale
+        out_h, out_w = in_h * scale, in_w * scale
         img = sktsf.resize(img, (in_c, out_h, out_w), mode='reflect', anti_aliasing=False)  # np.float64
         img = self.normalize(torch.from_numpy(img)).numpy()
         # img = F.interpolate(img.unsqueeze(0), size=(round(out_h), round(out_w)), mode="nearest").squeeze(0)
@@ -72,8 +78,24 @@ class ListDataset(Dataset):
             return img.copy(), box.copy(), label.copy(), scale
         else:
             return img, (in_h, in_w), box, label, difficult
+
     def __len__(self):
         return len(self.ids)
+
+    def sort_img(self):
+        # 原始图片shape  [(w,h),...]
+        ori_shapes = []
+        # hw_ratio = []
+        # for id_ in self.ids:
+        #     img_ = Image.open(os.path.join(self.data_dir, 'JPEGImages', id_ + '.jpg'))
+        #     ori_shapes.append(img_.size)
+            # hw_ratio.append(img_.width/img_.height)
+        ori_shapes = [Image.open(os.path.join(self.data_dir, 'JPEGImages', id_ + '.jpg')).size for id_ in self.ids]
+        sorted_index = sorted(range(len(self.ids)),key=lambda x:ori_shapes[x][0]/ori_shapes[x][1])
+        # ori_shapes.sort(key=lambda x:x[0]/x[1])
+        #  # 将文件id按照宽高比从小到大重新排序
+        self.ids=[self.ids[i] for i in sorted_index]
+
 
 # 为测试图片准备
 class ImageFolder(Dataset):
@@ -126,7 +148,6 @@ def flip_bbox(bbox, size, y_flip=False, x_flip=False):
 
 
 def crop_bbox(bbox, y_slice=None, x_slice=None, allow_outside_center=True, return_param=False):
-
     t, b = _slice_to_bounds(y_slice)
     l, r = _slice_to_bounds(x_slice)
     crop_bb = np.array((t, l, b, r))
