@@ -14,7 +14,7 @@ import torch
 if __name__ == '__main__':
     # 准备训练与验证数据
     trainset = ListDataset(cfg.train_dir,is_train=True)
-    dataloader = DataLoader(trainset, batch_size=1, shuffle=True, num_workers=cfg.num_workers)
+    dataloader = DataLoader(trainset, batch_size=1,shuffle=True, num_workers=cfg.num_workers)
     testset = ListDataset(cfg.val_dir, split='test', is_train=False)
     test_dataloader = DataLoader(testset, batch_size=1, num_workers=cfg.test_num_workers, pin_memory=True)
     # 加载模型与权重
@@ -33,18 +33,17 @@ if __name__ == '__main__':
             loss.backward()
             model.optimizer.step()
             model.optimizer.zero_grad()
-
+        
         model.eval()
-        eval_result = eval(test_dataloader, model)
-        print('chen-mAP', eval_result['map'])
+        chen_result = eval(test_dataloader, model)
         # 每个Epoch计算一次mAP
         # ap_table = [["Index", "Class name", "Precision", "Recall", "AP", "F1-score"]]
         eval_result = Eval(test_dataloader, model)
         # for p, r, ap, f1, cls_id in zip(*eval_result):
         #   ap_table += [[cls_id+1, cfg.class_name[cls_id], "%.3f" % p, "%.3f" % r, "%.3f" % ap, "%.3f" % f1]]
         # print('\n' + AsciiTable(ap_table).table)
-        eval_map = round(eval_result[2].mean(), 4)
-        print("Epoch %d/%d ---- mAP:%.4f Loss:%.4f" % (epoch, cfg.epoch, eval_map, loss))
+        eval_map = eval_result[2].mean()
+        print("Epoch %d/%d ---- chen-mAP:%.4f new-mAP:%.4f" % (epoch, cfg.epoch, chen_result['map'], eval_map))
         # 绘制mAP和Loss曲线
         # vis.line(X=np.array([epoch]), Y=np.array([eval_map]), win='mAP',
         #        update=None if epoch == 1 else 'append', opts=dict(title='mAP'))
