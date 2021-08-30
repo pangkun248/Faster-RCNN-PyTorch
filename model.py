@@ -1,6 +1,5 @@
 import torch
 import numpy as np
-from utils import array_tool as at
 from utils.box_tools import loc2box, create_anchor_all, generate_anchor_base,loc2box_torch
 from torchvision.models import vgg16
 from utils.creator_tool import AnchorTargetCreator, ProposalTargetCreator, ProposalCreator, NMS
