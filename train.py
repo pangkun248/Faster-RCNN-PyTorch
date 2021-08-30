@@ -3,7 +3,6 @@ from config import cfg
 from dataset import ListDataset
 from model import FasterRCNN
 from torch.utils.data import DataLoader
-from utils import array_tool as at
 from utils.eval_tool import Eval
 from utils.chen_map import eval
 from terminaltables import AsciiTable
@@ -13,9 +12,9 @@ import torch
 
 if __name__ == '__main__':
     # 准备训练与验证数据
-    trainset = ListDataset(cfg.train_dir,is_train=True)
+    trainset = ListDataset(cfg,is_train=True)
     dataloader = DataLoader(trainset, batch_size=1,shuffle=True, num_workers=cfg.num_workers)
-    testset = ListDataset(cfg.val_dir, split='test', is_train=False)
+    testset = ListDataset(cfg, split='test', is_train=False)
     test_dataloader = DataLoader(testset, batch_size=1, num_workers=cfg.test_num_workers, pin_memory=True)
     # 加载模型与权重
     model = FasterRCNN().cuda()
