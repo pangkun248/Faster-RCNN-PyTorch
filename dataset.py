@@ -1,5 +1,4 @@
 import cv2
-import torch
 from torch.utils.data import Dataset
 from torchvision import transforms as tvtsf
 import numpy as np
@@ -9,24 +8,21 @@ import random
 import glob
 import xml.etree.ElementTree as ET
 import os
-from skimage import transform as sktsf
-import time
-
-
-cls_list = ('aeroplane', 'bicycle', 'bird', 'boat', 'bottle', 'bus', 'car', 'cat', 'chair', 'cow', 'diningtable',
-            'dog', 'horse', 'motorbike', 'person', 'pottedplant', 'sheep', 'sofa', 'train', 'tvmonitor')
 
 
 class ListDataset(Dataset):
-    def __init__(self, data_dir, split='trainval', is_train=False):
-        id_list_file = os.path.join(data_dir, 'ImageSets/Main/{0}.txt'.format(split))
+    def __init__(self, cfg, split='trainval', is_train=False):
+        self.data_dir = cfg.train_dir if is_train else cfg.val_dir
+        id_list_file = os.path.join(cfg.train_dir, 'ImageSets/Main/{0}.txt'.format(split))
         self.ids = [id_.strip() for id_ in open(id_list_file)]
-        self.data_dir = data_dir
         self.ignore_difficult = is_train
         self.normalize = tvtsf.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
         self.is_train = is_train
         self.ToTensor = tvtsf.ToTensor()
-        self.sort_img()
+        self.cls_list = cfg.class_name
+        self.min_size = cfg.min_size
+        self.max_size = cfg.max_size
+        # self.sort_img()
 
     def __getitem__(self, i):
         id_ = self.ids[i]
@@ -44,35 +40,27 @@ class ListDataset(Dataset):
                 int(bndbox_anno.find(tag).text) - 1
                 for tag in ('ymin', 'xmin', 'ymax', 'xmax')])
             name = obj.find('name').text.lower().strip()
-            label.append(cls_list.index(name))
+            label.append(self.cls_list.index(name))
         box = np.stack(bbox).astype(np.float32)
         label = np.stack(label).astype(np.int32)
-        # When `use_difficult==False`, all elements in `difficult` are False.
         difficult = np.array(difficult, dtype=np.bool).astype(np.uint8)  # PyTorch don't support np.bool
 
         # Load a image
         img_file = os.path.join(self.data_dir, 'JPEGImages', id_ + '.jpg')
 
-        img = np.asarray(Image.open(img_file), dtype=np.float32).transpose((2, 0, 1))
-        img = img / 255.
-        # img = self.ToTensor(Image.open(img_file))  # 自带归一化
+        img = self.ToTensor(Image.open(img_file))  # 自带归一化
         in_c, in_h, in_w = img.shape
         # preprocess img 缩放到最小比例,这样最终长和宽都能放缩到规定的尺寸
-        scale1 = 600 / min(in_h, in_w)
-        scale2 = 1000 / max(in_h, in_w)
+        scale1 = self.min_size / min(in_h, in_w)
+        scale2 = self.max_size / max(in_h, in_w)
         scale = min(scale1, scale2)
-        # resize到最小比例,anti_aliasing为是否采用高斯滤波 使用sk-learn的方式来resize
-        out_h, out_w = in_h * scale, in_w * scale
-        img = sktsf.resize(img, (in_c, out_h, out_w), mode='reflect', anti_aliasing=False)  # np.float64
-        img = self.normalize(torch.from_numpy(img)).numpy()
-        # img = F.interpolate(img.unsqueeze(0), size=(round(out_h), round(out_w)), mode="nearest").squeeze(0)
-        # img = F.interpolate(img.unsqueeze(0), size=(round(out_h), round(out_w)), mode="bilinear",align_corners=True).squeeze(0)
-        # transforms.Normalize使用如下公式进行归一化 value=(value-mean)/std,转换为[-1,1],caffe只有减去均值
-        # img = self.normalize(img).numpy()  # torch.float32
+        out_h, out_w = round(in_h * scale), round(in_w * scale)
+        img = F.interpolate(img.unsqueeze(0), size=(out_h, out_w), mode="bilinear",align_corners=True).squeeze(0)
+        img = self.normalize(img).numpy()
         if self.is_train:
             box *= scale
             # 需要将后续返回的img替换为img.copy()
-            # 因为给定numpy数组的某些步幅为负(img[:, ::-1, :]和img[:, :, ::-1])。numpy官方当前不支持此功能,但将来的版本中将添加此功能。
+            # 因为给定numpy数组的某些步幅为负(img[:, ::-1, :]和img[:, :, ::-1])。numpy官方当前不支持此功能。
             img, params = random_flip(img, x_random=True, return_param=True)
             box = flip_bbox(box, (out_h, out_w), x_flip=params['x_flip'])
             return img.copy(), box.copy(), label.copy(), scale
@@ -84,15 +72,8 @@ class ListDataset(Dataset):
 
     def sort_img(self):
         # 原始图片shape  [(w,h),...]
-        ori_shapes = []
-        # hw_ratio = []
-        # for id_ in self.ids:
-        #     img_ = Image.open(os.path.join(self.data_dir, 'JPEGImages', id_ + '.jpg'))
-        #     ori_shapes.append(img_.size)
-            # hw_ratio.append(img_.width/img_.height)
         ori_shapes = [Image.open(os.path.join(self.data_dir, 'JPEGImages', id_ + '.jpg')).size for id_ in self.ids]
         sorted_index = sorted(range(len(self.ids)),key=lambda x:ori_shapes[x][0]/ori_shapes[x][1])
-        # ori_shapes.sort(key=lambda x:x[0]/x[1])
         #  # 将文件id按照宽高比从小到大重新排序
         self.ids=[self.ids[i] for i in sorted_index]
 
@@ -114,11 +95,8 @@ class ImageFolder(Dataset):
         scale1 = 600 / min(in_h, in_w)
         scale2 = 1000 / max(in_h, in_w)
         scale = min(scale1, scale2)
-        out_h, out_w = in_h * scale, in_w * scale
-        img = sktsf.resize(img, (in_c, out_h, out_w), mode='reflect', anti_aliasing=False)  # np.float64
-        img = self.normalize(torch.from_numpy(img)).numpy()
-        # img = F.interpolate(img.unsqueeze(0), size=(round(in_h * scale), round(in_w * scale)), mode="nearest").squeeze(0)
-        # img = tvtsf.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])(img)
+        img = F.interpolate(img.unsqueeze(0), size=(round(in_h * scale), round(in_w * scale)), mode="nearest").squeeze(0)
+        img = tvtsf.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])(img)
         return img_path, img, img.shape[1:]
 
     def __len__(self):
