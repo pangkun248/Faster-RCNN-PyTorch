@@ -27,7 +27,7 @@ if __name__ == '__main__':
     best_map = 0
     for epoch in range(cfg.epoch):
         for img, target_box, target_label, scale in tqdm(dataloader):
-            scale = at.scalar(scale)
+            scale = scale.cuda()
             img, target_box, target_label = img.cuda().float(), target_box.cuda(), target_label.cuda()
             loss = model(img, target_box, target_label, scale)
             loss.backward()
