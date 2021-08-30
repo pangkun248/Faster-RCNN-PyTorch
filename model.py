@@ -88,23 +88,17 @@ class FasterRCNN(nn.Module):
         # (128, 4)  (128, 4)     (128,)
         sample_roi, gt_head_loc, gt_head_label = self.proposal_target_creator(
             roi,  # (2000,4)
-            # at.tonumpy(target_box),
             target_box,
             target_label,
-            # at.tonumpy(target_label),
             )
         # (128, self.n_class*4) (128, self.n_class)
         head_loc, head_score = self.head(features, sample_roi)
 
         # ------------------ 计算 RPN losses -------------------#
         # 开始计算RPN网络的定位损失
-        # gt_rpn_loc, gt_rpn_label = self.anchor_target_creator(at.tonumpy(target_box), anchor, img_size)
         gt_rpn_loc, gt_rpn_label = self.anchor_target_creator(target_box, anchor, img_size)
         # 这里使用long类型因为下面cross_entropy方法需要
         gt_rpn_label = gt_rpn_label.long()
-        # gt_rpn_label = at.totensor(gt_rpn_label).long()
-        # gt_rpn_loc = at.totensor(gt_rpn_loc)
-        # gt_rpn_loc = at.totensor(gt_rpn_loc)
         rpn_loc_loss = _fast_rcnn_loc_loss(rpn_loc, gt_rpn_loc, gt_rpn_label, self.rpn_sigma)
         # 开始计算RPN网络的分类损失,忽略那些label为-1的
         rpn_cls_loss = F.cross_entropy(rpn_score, gt_rpn_label.cuda(), ignore_index=-1)
@@ -115,9 +109,8 @@ class FasterRCNN(nn.Module):
         head_loc = head_loc.reshape(n_sample, -1, 4)  # torch.Size([128, self.n_class, 4])
         # 该一步主要是获取sample_roi中每个roi所对应的修正系数loc.当然,正样本和负样本所获取的loc情况是不同的
         # 正样本:某个roi中类别概率最大的那个类别的loc;负样本:永远是第1个loc(背景类 index为0)
-        head_loc = head_loc[torch.arange(n_sample).long().cuda(), at.totensor(gt_head_label).long()]
-        gt_head_label = at.totensor(gt_head_label).long()
-        gt_head_loc = at.totensor(gt_head_loc)
+        gt_head_label = gt_head_label.long()
+        head_loc = head_loc[torch.arange(n_sample).long().cuda(), gt_head_label]
         # 开始计算ROI_head网络的定位与分类损失
         roi_loc_loss = _fast_rcnn_loc_loss(head_loc, gt_head_loc, gt_head_label, self.roi_sigma)
         roi_cls_loss = F.cross_entropy(head_score, gt_head_label.cuda())
@@ -137,36 +130,24 @@ class FasterRCNN(nn.Module):
         scores = list()
         # 因为batch_size为1所以这个循环就只循环一次
         for img, size in zip(imgs, sizes):
-            # numpy.newaxis
-            # The newaxis object can be used in all slicing operations to create an axis of length one.
-            # newaxis is an alias for ‘None’, and ‘None’ can be used in place of this with the same result.
-            # 以上是numpy官方文档
-            # [None]在numpy中是新增维度的意思 和numpy.newaxis的效果一样,None是它的别名 (None is np.newaxis) == True
-            # 所以这里就是在0维新增一个维度,你也可以直接ctrl+鼠标左键点击np.newaxis会发现numeric.py文件中 newaxis=None
-            img = at.totensor(img[None]).float()
             scale = img.shape[3] / size[1]
             # (300, self.n_class*4) (300, self.n_class) (300, 4) 理论上是这样的数据,有时候可能会小于300
             roi_locs, roi_scores, rois = self(img, scale=scale,is_train=False)
-            roi = at.totensor(rois) / scale     # 将roi的坐标转换回原始图片尺寸上
 
             # chenyun版本的代码中是有对训练阶段的roi_locs进行归一化的,然后再在非训练状态下进行逆向归一化
             roi_locs = (roi_locs * self.std + self.mean)  # 减均值除以方差的逆过程
 
             roi_locs = roi_locs.view(-1, self.n_class, 4)  # [300, self.n_class*4] -> [300, self.n_class, 4]
             roi = roi.view(-1, 1, 4).expand_as(roi_locs)   # [300, 1, 4] -> [300, self.n_class, 4]
-            # pred_boxes = loc2box(at.tonumpy(roi).reshape((-1, 4)),at.tonumpy(roi_locs).reshape((-1, 4)))
-            pred_boxes = loc2box_torch(roi.reshape(-1, 4),roi_locs.reshape(-1, 4))
-            pred_boxes = at.totensor(pred_boxes)  # torch.Size([5700, 4])
+            pred_boxes = loc2box_torch(roi.reshape(-1, 4),roi_locs.reshape(-1, 4)) / scale
+            pred_boxes = pred_boxes  # torch.Size([5700, 4])
             pred_boxes = pred_boxes.view(-1, self.n_class, 4)   # (300*self.n_class, 4) -> (300, self.n_class, 4)
             # 限制预测框的坐标范围
             pred_boxes[:,:, 0::2].clamp_(min=0, max=size[0])
             pred_boxes[:,:, 1::2].clamp_(min=0, max=size[1])
             # 对roi_head网络预测的每类进行softmax处理
-           # pred_scores = at.tonumpy(F.softmax(at.totensor(roi_scores), dim=1))
-            pred_scores = F.softmax(at.totensor(roi_scores), dim=1)
+            pred_scores = F.softmax(roi_scores, dim=1)
             
-            # pred_boxes = at.tonumpy(pred_boxes)
-            # pred_scores = at.tonumpy(pred_scores)
             # 每张图片的预测结果(m为预测目标的个数)     # (m, 4)  (m,)  (m,)
             pred_boxes, pred_label, pred_score = self._suppress(pred_boxes, pred_scores)
             boxes.append(pred_boxes)
@@ -203,36 +184,15 @@ class FasterRCNN(nn.Module):
             mask = score_l > self.score_thresh
             box_l = box_l[mask]
             score_l = score_l[mask]
-            # 对cls_bbox_l根据prob_l重新从大到小排序,方便后面的NMS
-            #order = score_l.ravel().argsort()[::-1]
-            #box_l = box_l[order]
-            #score_l = score_l[order]
-            # if box_l.shape[0] == 0:
-            #    continue
-            #pred_bbox_i,pred_score_i = NMS(box_l,score_l, cfg.nms_test)
-            #box_list.append(pred_bbox_i)
-            # 此时的label中的元素已经和config文件中类名的索引一致了,因为进行了-1操作
-            #label_list.append((l - 1) * np.ones((len(pred_score_i),)))
-            #score_list.append(pred_score_i)
             # 这里将nms放在GPU上计算并使用官方nms速度会快很多
             keep = nms(box_l, score_l, self.nms_thresh)
-            # box_list.append(box_l[keep].cpu().numpy())
             box_list.append(box_l[keep])
-            # label_list.append((l - 1) * np.ones((len(keep),)))
             label_list.append((l - 1) * torch.ones_like(keep))
-            # score_list.append(score_l[keep].cpu().numpy())
             score_list.append(score_l[keep])
         # 如果对一张图片没有预测出满足条件的box,那么则返回一个空的数据
-        #if not box_list:
-        #   return np.array([]), np.array([]), np.array([]),
-        #else:
-        # box_np = np.concatenate(box_list, axis=0).astype(np.float32)
-        # label_np = np.concatenate(label_list, axis=0).astype(np.int32)
-        # score_np = np.concatenate(score_list, axis=0).astype(np.float32)
         box = torch.cat(box_list, dim=0).cpu().numpy()
         label = torch.cat(label_list, dim=0).cpu().numpy()
         score = torch.cat(score_list, dim=0).cpu().numpy()
-        # return box_np, label_np, score_np
         return box, label, score
 
     def get_optimizer(self):
@@ -246,7 +206,7 @@ class FasterRCNN(nn.Module):
                 else:
                     params += [{'params': [value], 'lr': lr, 'weight_decay': cfg.weight_decay}]
         if cfg.use_adam:
-            self.optimizer = torch.optim.Adam(params)
+            self.optimizer = torch.optim.Adam(params) 
         else:
             self.optimizer = torch.optim.SGD(params, momentum=0.9)
         return self.optimizer
@@ -301,7 +261,6 @@ class RegionProposalNetwork(nn.Module):
     def forward(self, x, img_size, scale=1.,is_train=True):
         batch_size, channels, hh, ww = x.shape
         # 将整个输入图片内都布满anchor
-        # anchor = create_anchor_all(np.array(self.anchor_base), self.feat_stride, hh, ww)
         anchor = self.create_anchor_all_torch(hh, ww)
         x = F.relu(self.conv1(x))
         rpn_locs = self.loc(x)  # batch_size,36,h,w
@@ -322,11 +281,10 @@ class RegionProposalNetwork(nn.Module):
             roi = self.proposal_layer(rpn_locs[i].detach(),  # 这里要截断梯度
                                       rpn_fg_scores[i].detach(),
                                       anchor, img_size,scale=scale)
-            # batch_index = i * np.ones((len(roi),), dtype=np.int32)
+            # batch_index = i * np.ones((len(roi),), dtype=np.int32)  # 这里本是为了roi的bs索引准备的,但由于bs固定为1,所以省略了
             rois.append(roi)
             # roi_indices.append(batch_index)
 
-        # rois = np.concatenate(rois, axis=0)
         rois = torch.cat(rois, dim=0)
         # roi_indices = np.concatenate(roi_indices, axis=0)
         return rpn_locs, rpn_scores, rois, roi_indices, anchor
@@ -395,18 +353,7 @@ class RoIHead(nn.Module):
             roi_locs    : RoIHead网络提供的roi修正系数     -> torch.Size([128, self.n_class*4])
             roi_scores  : RoIHead网络提供的roi各类置信度   -> torch.Size([128, self.n_class])
         """
-        # rois = at.totensor(rois)
-        # roi_list = []
-        #for roi in rois:
-        #   roi_part = x[:,:,(roi[0]/16).int():(roi[2]/16).int()+1,(roi[1]/16).int():(roi[3]/16).int()+1]
-            # 注意AdaptiveMaxPool2d这个自适应Maxpooling的方法有两个参数 1.output_size(输出尺寸) 2.return_indices(默认False)
-            # 第二个参数应该是返回最大值在原数据中的索引,output_size参数类型为元组形式的如(4,5)或者单一数字4,等价于(4,4)
-            # 但是如果你输入了两个int参数如4,4那么会自动将第二个4视作True -> return_indices为True同理参数为4,0 return_indices则为False
-            # 该函数的更多用法请参考源码.
-        #    roi_part = nn.AdaptiveMaxPool2d((7,7))(roi_part)
-        #    roi_list.append(roi_part)
-        #pool = torch.cat(roi_list)              # torch.Size([128, 512, 7, 7])
-        # 这里也可同样使用官方的roi_pool来代自适应池化,精度没什么变化但是速度变快
+        # 这里也可同样使用官方的roi_pool来代替AdaptiveMaxPool2d,精度没什么变化但是速度变快
         rois = torch.cat((torch.zeros((rois.shape[0], 1), device='cuda'), rois), 1)
         rois = rois[:, [0, 2, 1, 4, 3]]  # ind, y x y x -> ind x y x y
         pool = self.roi(x, rois)
