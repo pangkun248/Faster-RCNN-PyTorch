@@ -41,12 +41,8 @@ class ProposalCreator:
         else:
             n_pre_nms = self.n_test_pre_nms
             n_post_nms = self.n_test_post_nms
-        # roi = loc2box(anchor, loc)  # (16650, 4)
         roi = loc2box_torch(anchor, loc)  # (16650, 4)
         # 限制roi的坐标范围
-        # roi[:, 0:4:2] = np.clip(roi[:, 0:4:2], 0, img_size[0])
-        # roi[:, 1:4:2] = np.clip(roi[:, 1:4:2], 0, img_size[1])
-
         roi[:, 0:4:2].clip_(0, img_size[0])  # clamp_的别名
         roi[:, 1:4:2].clip_(0, img_size[1])
 
@@ -54,22 +50,17 @@ class ProposalCreator:
         min_size = self.min_size * scale
         hs = roi[:, 2] - roi[:, 0]
         ws = roi[:, 3] - roi[:, 1]
-        # keep = np.where((hs >= min_size) & (ws >= min_size))[0]  # 没有 第二第三参数数 等价于nonzero
-        keep = torch.nonzero((hs >= min_size) & (ws >= min_size)).squeeze()
+        keep = torch.nonzero((hs >= min_size) & (ws >= min_size)).squeeze()  # 返回shape(n,1) 所以要squeeze操作
         roi = roi[keep]
         score = score[keep]
 
         # 重新根据分类置信度从大到小进行排序然后选取 n_pre_nms 个进行nms
-        # order = score.argsort()[::-1]
         order = score.argsort(descending=True)
         order = order[:n_pre_nms]
         roi = roi[order]
         score = score[order]
-        # roi,score = NMS(roi, score, cfg.nms_rpn)
-        # roi = roi[:n_post_nms]
         keep = nms(roi, score, self.nms_thresh)
         keep = keep[:n_post_nms]
-        # roi = roi[keep.cpu().numpy()]
         roi = roi[keep]
         return roi
 
@@ -165,7 +156,6 @@ class AnchorTargetCreator(object):
 
         # 计算内框和标注框的iou
         ious = box_iou_torch(anchor, target_box)
-        # argmax_ious = ious.argmax(dim=1)  # 每个 anchor与target_boxes的最大iou的索引
         max_ious,argmax_ious = ious.max(dim=1)  # 每个 anchor与target_boxes的最大iou的值
         # 每个 target_box与所有anchors的最大iou
         gt_max_ious,_ = ious.max(dim=0)
@@ -185,16 +175,14 @@ class AnchorTargetCreator(object):
         pos_num = pos_index.numel()  # 兼容 0-d tensor
         if pos_num > n_pos:
             # disable_index = np.random.choice(pos_index, size=(pos_num - n_pos), replace=False)
-            disable_index = pos_index[torch.randperm(pos_num)[:pos_num - n_pos]]
+            disable_index = pos_index[torch.randperm(pos_num)[:pos_num - n_pos]]  # torch等价操作 下同
             label[disable_index] = -1
 
         # 如果负样本超过理论值则随机丢弃多余的负样本
         n_neg = self.n_sample - torch.sum(torch.eq(label, 1))
-        # neg_index = np.where(label == 0)[0]
         neg_index = torch.nonzero(label == 0).squeeze()
         neg_num = neg_index.numel()
         if neg_num > n_neg:
-            # disable_index = np.random.choice(neg_index, size=(neg_num - n_neg), replace=False)
             disable_index = neg_index[torch.randperm(neg_num)[:neg_num - n_neg]]
             label[disable_index] = -1
 
@@ -239,18 +227,15 @@ class ProposalTargetCreator(object):
         """
         # 这里将target_box也并入到roi中去 这里可以将roi当做RPN阶段的"anchor",只不过是动态的,
         # 将target_box添加到roi中是为了更好的收敛ROIHead网络而做的操作,训练初期RPN阶段提供的roi不管是从质量还是数量来说都不高,这里算是弥补了一些
-        # roi = np.concatenate((roi, target_box), axis=0)
         roi = torch.cat((roi, target_box), dim=0)
         pos_roi_per_image = round(self.n_sample * self.pos_ratio)
         iou = box_iou_torch(roi, target_box)
         # 每个roi和target_boxes的最大iou索引 每个roi和n个tartget_box的最大iou
-        # gt_assignment = iou.argmax(dim=1)
         max_iou, gt_assignment = iou.max(dim=1)
         # 将所有种类索引+1(所有label>=1,0为下面的负样本所准备的),并且此时为所有roi赋予label.值为与其iou最大的target_box的label值
         gt_roi_label = label[gt_assignment] + 1  # (roi.shape[0],)
 
         # 获取那些IOU大于pos_iou_thresh的roi索引
-        # pos_index = np.where(max_iou >= self.pos_iou_thresh)[0]
         pos_index = torch.nonzero(max_iou >= self.pos_iou_thresh)
         pos_num = pos_index.numel()
         pos_roi_per_this_image = int(min(pos_roi_per_image, pos_num))
@@ -259,14 +244,12 @@ class ProposalTargetCreator(object):
             pos_index = pos_index[torch.randperm(pos_num)[:pos_roi_per_this_image]]
         # 获取那些IOU在[neg_iou_thresh_lo, neg_iou_thresh_hi)区间的roi索引
         # 其实这里感觉分配的不是很合理,因为IOU=0.49与0.51在数值上区别很小.人眼更是几乎看不出来(除非写轮眼) TODO 待实验 hi↑ lo↓
-        # neg_index = np.where((max_iou < self.neg_iou_thresh_hi) & (max_iou >= self.neg_iou_thresh_lo))[0]
         neg_index = torch.nonzero((max_iou < self.neg_iou_thresh_hi) & (max_iou >= self.neg_iou_thresh_lo))
         neg_num = neg_index.numel()
         # 计算每张图片中理论上的负样本个数
         neg_roi_per_this_image = self.n_sample - pos_roi_per_this_image
         neg_roi_per_this_image = int(min(neg_roi_per_this_image, neg_num))
         if neg_num > 0:
-            # neg_index = np.random.choice(neg_index, size=neg_roi_per_this_image, replace=False)
             neg_index = neg_index[torch.randperm(neg_num)[:neg_roi_per_this_image]]
         # 将正负样本的roi索引合并到一起
         keep_index = torch.cat((pos_index, neg_index)).squeeze()
