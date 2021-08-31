@@ -11,7 +11,8 @@ def Eval(dataloader, model):
     with torch.no_grad():
         for imgs, sizes, gt_boxes_, gt_labels_,difficult_ in tqdm(dataloader):
             sizes = [sizes[0].item(), sizes[1].item()]
-            pred_boxes_, pred_labels_, pred_scores_ = model.predict(imgs, [sizes])
+            imgs = imgs.cuda()
+            pred_boxes_, pred_labels_, pred_scores_ = model.predict(imgs, sizes)
             gt_boxes += list(gt_boxes_.numpy())
             gt_labels += list(gt_labels_.numpy())
             pred_boxes += pred_boxes_
