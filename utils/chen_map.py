@@ -4,12 +4,14 @@ import numpy as np
 from tqdm import tqdm
 from utils.box_tools import box_iou
 
+
 def eval(dataloader, faster_rcnn):
     pred_bboxes, pred_labels, pred_scores = list(), list(), list()
     gt_bboxes, gt_labels, gt_difficults = list(), list(), list()
     for imgs, sizes, gt_bboxes_, gt_labels_,gt_difficults_ in tqdm(dataloader):
-        sizes = [sizes[0][0].item(), sizes[1][0].item()]
-        pred_bboxes_, pred_labels_, pred_scores_ = faster_rcnn.predict(imgs, [sizes])
+        sizes = [sizes[0].item(), sizes[1].item()]
+        imgs = imgs.cuda()
+        pred_bboxes_, pred_labels_, pred_scores_ = faster_rcnn.predict(imgs, sizes)
         gt_bboxes += list(gt_bboxes_.numpy())
         gt_labels += list(gt_labels_.numpy())
         gt_difficults += list(gt_difficults_.numpy())
