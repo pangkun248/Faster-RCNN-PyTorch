@@ -6,9 +6,9 @@ from torchvision.ops import nms
 import torch
 
 
-class ProposalCreator:
+class ROICreator:
     """
-    ProposalCreator的主要功能如下:
+    ROICreator的主要功能如下:
     1.由rpn得出的修正系数来修正基础anchor来得到roi
     2.限制roi的坐标范围
     3.剔除那些宽高小于min_size的roi
@@ -24,7 +24,7 @@ class ProposalCreator:
         self.n_test_pre_nms = 6000
         self.n_test_post_nms = 300
         self.min_size = 16
-        self.nms_thresh = 0.7
+        self.nms_thresh = cfg.nms_rpn
 
     def __call__(self, loc, score, anchor, img_size, scale=1.):
         """
@@ -243,7 +243,7 @@ class ProposalTargetCreator(object):
             # pos_index = np.random.choice(pos_index, size=pos_roi_per_this_image, replace=False)
             pos_index = pos_index[torch.randperm(pos_num)[:pos_roi_per_this_image]]
         # 获取那些IOU在[neg_iou_thresh_lo, neg_iou_thresh_hi)区间的roi索引
-        # 其实这里感觉分配的不是很合理,因为IOU=0.49与0.51在数值上区别很小.人眼更是几乎看不出来(除非写轮眼) TODO 待实验 hi↑ lo↓
+        # 其实这里感觉分配的不是很合理,因为IOU=0.49与0.51在数值上区别很小.人眼更是几乎看不出来(除非写轮眼)  hi↑ lo↓ ?
         neg_index = torch.nonzero((max_iou < self.neg_iou_thresh_hi) & (max_iou >= self.neg_iou_thresh_lo))
         neg_num = neg_index.numel()
         # 计算每张图片中理论上的负样本个数
