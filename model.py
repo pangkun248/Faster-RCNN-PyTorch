@@ -2,13 +2,12 @@ import torch
 import numpy as np
 from utils.box_tools import loc2box, create_anchor_all, generate_anchor_base,loc2box_torch
 from torchvision.models import vgg16
-from utils.creator_tool import AnchorTargetCreator, ProposalTargetCreator, ProposalCreator, NMS
+from utils.creator_tool import AnchorTargetCreator, ProposalTargetCreator, ROICreator, NMS
 from torch import nn
 from torch.hub import load_state_dict_from_url
 from torch.nn import functional as F
 from config import cfg
-from torchvision.ops import nms
-from torchvision.ops import RoIPool
+from torchvision.ops import nms, batched_nms, RoIPool
 
 
 def decom_vgg16():
@@ -18,7 +17,7 @@ def decom_vgg16():
     # 如果基于已有模型训练则不加载vgg模型,否则加载
     if not cfg.load_path:
         # 从Pytorch官方加载vgg的权重,model_dir为权重保存地址 '.'为当前目录下
-        state_dict = load_state_dict_from_url('https://download.pytorch.org/models/vgg16-397923af.pth',model_dir='.')
+        state_dict = load_state_dict_from_url('https://download.pytorch.org/models/vgg16-397923af.pth', model_dir='.')
         model.load_state_dict(state_dict)
     # 截取vgg16的前30层网络结构,因为再往后的就不需要了
     # 第30层是 conv_5_3后面的 Relu, 31层为maxpool再往后就是fc层了
@@ -55,7 +54,7 @@ class FasterRCNN(nn.Module):
         self.extractor, classifier = decom_vgg16()
         self.rpn = RegionProposalNetwork()
         self.head = RoIHead(n_class=self.n_class, classifier=classifier)
-        self.nms_thresh = 0.3
+        self.nms_thresh = cfg.nms_roi  # 测试时 ROI阶段nms的IOU阈值
         self.rpn_sigma = cfg.rpn_sigma
         self.roi_sigma = cfg.roi_sigma
         # 为RPN及ROI_Head网络准备的 AnchorTargetCreator ProposalTargetCreator 优化方式
@@ -64,14 +63,14 @@ class FasterRCNN(nn.Module):
         self.optimizer = self.get_optimizer()
         self.mean = torch.Tensor((0., 0., 0., 0.)).cuda().repeat(self.n_class)[None]
         self.std = torch.Tensor((0.1, 0.1, 0.2, 0.2)).cuda().repeat(self.n_class)[None]
+        self.score_thresh = 0.05  # 测试时的ROI网络中的score阈值
 
-    def forward(self, x, target_boxes=None, target_labels=None, scale=1.,is_train=True):
-        self.score_thresh = 0.7 if is_train else 0.05
+    def forward(self, x, target_boxes=None, target_labels=None, scale=1.):
         img_size = x.shape[2:]
         features = self.extractor(x)
         # 这里把一个batch(虽然为1)中的所有roi都放在一起了,用roi_indices来代表其所属batch的index
         # [1, 16650, 4] [1, 16650, 2] [2000, 4] [2000,] [16650, 4]
-        rpn_locs, rpn_scores, rois, roi_indices, anchor = self.rpn(features, img_size, scale,is_train)
+        rpn_locs, rpn_scores, rois, roi_indices, anchor = self.rpn(features, img_size, scale)
         # 非训练阶段
         if not self.training:
             # (300, self.n_class*4) (300, self.n_class)  这个300只是nms后的一个过滤值,参考ProposalCreator中的参数
@@ -85,11 +84,7 @@ class FasterRCNN(nn.Module):
         roi = rois
         # 为训练ROI_head 网络准备的ProposalTargetCreator
         # (128, 4)  (128, 4)     (128,)
-        sample_roi, gt_head_loc, gt_head_label = self.proposal_target_creator(
-            roi,  # (2000,4)
-            target_box,
-            target_label,
-            )
+        sample_roi, gt_head_loc, gt_head_label = self.proposal_target_creator(roi, target_box, target_label)
         # (128, self.n_class*4) (128, self.n_class)
         head_loc, head_score = self.head(features, sample_roi)
 
@@ -117,6 +112,7 @@ class FasterRCNN(nn.Module):
 
         return losses
 
+    @torch.no_grad()
     def predict(self, imgs,sizes=None):
         """
         该方法在非训练阶段的时候使用
@@ -128,16 +124,16 @@ class FasterRCNN(nn.Module):
         labels = list()
         scores = list()
         # 因为batch_size为1所以这个循环就只循环一次
-        for img, size in zip(imgs, sizes):
+        for img, size in zip([imgs], [sizes]):
             scale = img.shape[3] / size[1]
             # (300, self.n_class*4) (300, self.n_class) (300, 4) 理论上是这样的数据,有时候可能会小于300
-            roi_locs, roi_scores, rois = self(img, scale=scale,is_train=False)
-
+            roi_locs, roi_scores, roi = self(img, scale=scale)
             # chenyun版本的代码中是有对训练阶段的roi_locs进行归一化的,然后再在非训练状态下进行逆向归一化
             roi_locs = (roi_locs * self.std + self.mean)  # 减均值除以方差的逆过程
 
             roi_locs = roi_locs.view(-1, self.n_class, 4)  # [300, self.n_class*4] -> [300, self.n_class, 4]
             roi = roi.view(-1, 1, 4).expand_as(roi_locs)   # [300, 1, 4] -> [300, self.n_class, 4]
+            # 将坐标放缩会原始尺寸 chenyun版本是将缩放这一步放到修正坐标之前,我觉得不太合理,就移到修正之后了.精度没变
             pred_boxes = loc2box_torch(roi.reshape(-1, 4),roi_locs.reshape(-1, 4)) / scale
             pred_boxes = pred_boxes  # torch.Size([5700, 4])
             pred_boxes = pred_boxes.view(-1, self.n_class, 4)   # (300*self.n_class, 4) -> (300, self.n_class, 4)
@@ -147,14 +143,13 @@ class FasterRCNN(nn.Module):
             # 对roi_head网络预测的每类进行softmax处理
             pred_scores = F.softmax(roi_scores, dim=1)
             
-            # 每张图片的预测结果(m为预测目标的个数)     # (m, 4)  (m,)  (m,)
-            pred_boxes, pred_label, pred_score = self._suppress(pred_boxes, pred_scores)
+            # 每张图片的预测结果(m为预测目标的个数)     # (m, 4)  (m,)  (m,) 跳过cls_id为0的pred_bbox与pred_scores,因为它是背景类
+            pred_boxes, pred_label, pred_score = self._suppress(pred_boxes[:,1:,:], pred_scores[:,1:])
             boxes.append(pred_boxes)
             #   [array([[302.97562, 454.60007, 389.80545, 504.98404],
             #           [304.9767 , 550.0696 , 422.17258, 620.1692 ],
             #           [375.89203, 540.1559 , 422.39435, 684.8439 ],
             #           [293.0167, 349.53333, 360.0981, 386.8974]], dtype = float32)]
-
             labels.append(pred_label)
             #   [array([ 0,  0,  15, 15])]
             scores.append(pred_score)
@@ -163,35 +158,24 @@ class FasterRCNN(nn.Module):
 
     def _suppress(self, pred_boxes, pred_scores):
         """
-         _suppress流程:主要是对Faster-RCNN网络最终预测的box与score进行score筛选、重新排序以及NMS
-         1.循环所有的标注类,在循环中过滤出那些类得分在self.score_thresh之上的cls_box与cls_score。
-         2.然后根据cls_score大小重新对cls_box与cls_score从大到小排序。如果某些类的cls_box为0则跳出本次循环
-         3.随后进行NMS.随后就将经过NMS筛选的box,score以及新建的label分别整合到一起并返回这三个值
-           最后如果一张图一个cls_box也没有预测出,则返回三个numpy空列表
+         _suppress流程:主要是对Faster-RCNN网络最终预测的box与score进行score筛选以及nms
+         1.循环所有的标注类,在循环中过滤出那些类得分在self.score_thresh之下的cls_box与cls_score。
+         2.随后进行batch_nms.随后就将经过nms筛选的box,score以及新建的label分别整合到一起并返回这三个值
          :param pred_bbox: rpn网络提供的roi,经过roi_head网络提供的loc再次修正得到的 torch.Size([300, self.n_class, 4])
          :param pred_scores: roi_head网络提供各个类的置信度 torch.Size([300, self.n_class])
          :return: faster-rcnn网络预测的目标框坐标,种类,种类的置信度
          """
-        box_list = list()
-        label_list = list()
-        score_list = list()
-        # 跳过cls_id为0的pred_bbox,因为它是背景类
-        for l in range(1, self.n_class):
-            box_l = pred_boxes[:, l, :]  # torch.Size([300, 1, 4])
-            score_l = pred_scores[:, l]             # torch.Size([300])
-            # 首先过滤掉那些类得分低于self.score_thresh的
-            mask = score_l > self.score_thresh
-            box_l = box_l[mask]
-            score_l = score_l[mask]
-            # 这里将nms放在GPU上计算并使用官方nms速度会快很多
-            keep = nms(box_l, score_l, self.nms_thresh)
-            box_list.append(box_l[keep])
-            label_list.append((l - 1) * torch.ones_like(keep))
-            score_list.append(score_l[keep])
-        # 如果对一张图片没有预测出满足条件的box,那么则返回一个空的数据
-        box = torch.cat(box_list, dim=0).cpu().numpy()
-        label = torch.cat(label_list, dim=0).cpu().numpy()
-        score = torch.cat(score_list, dim=0).cpu().numpy()
+        cls_ids = torch.arange(self.n_class-1)[None].repeat(pred_boxes.shape[0], 1)
+        # 首先过滤掉那些类得分低于self.score_thresh的
+        score_keep = pred_scores > self.score_thresh
+        pred_boxes = pred_boxes[score_keep].reshape(-1,4)
+        pred_scores = pred_scores[score_keep].flatten()
+        cls_ids = cls_ids[score_keep].flatten()
+        # 这里使用batch_nms速度会快一些,A100上 35/sec -> 41/sec
+        keep = batched_nms(pred_boxes, pred_scores,cls_ids, self.nms_thresh)
+        box = pred_boxes[keep].cpu().numpy()
+        score = pred_scores[keep].cpu().numpy()
+        label = cls_ids[keep].cpu().numpy()
         return box, label, score
 
     def get_optimizer(self):
@@ -204,10 +188,10 @@ class FasterRCNN(nn.Module):
                     params += [{'params': [value], 'lr': lr * 2, 'weight_decay': 0}]
                 else:
                     params += [{'params': [value], 'lr': lr, 'weight_decay': cfg.weight_decay}]
-        if cfg.use_adam:
-            self.optimizer = torch.optim.Adam(params) 
-        else:
+        if cfg.use_sgd:
             self.optimizer = torch.optim.SGD(params, momentum=0.9)
+        else:
+            self.optimizer = torch.optim.Adam(params)
         return self.optimizer
 
     def scale_lr(self, decay=0.1):
@@ -247,7 +231,7 @@ class RegionProposalNetwork(nn.Module):
         self.anchor_scales = torch.Tensor([8, 16, 32])
         self.anchor_base = None
         self.generate_anchor_base_torch()  # 生成9种基础anchor
-        self.proposal_layer = ProposalCreator(self)
+        self.roi_creator = ROICreator(self)
         self.anchor_types = self.anchor_base.shape[0]
         # 初始化RPN网络的三个卷积层及其权重
         self.conv1 = nn.Conv2d(512, 512, 3, 1, 1)
@@ -257,7 +241,7 @@ class RegionProposalNetwork(nn.Module):
         normal_init(self.score, 0, 0.01)
         normal_init(self.loc, 0, 0.01)
 
-    def forward(self, x, img_size, scale=1.,is_train=True):
+    def forward(self, x, img_size, scale=1.):
         batch_size, channels, hh, ww = x.shape
         # 将整个输入图片内都布满anchor
         anchor = self.create_anchor_all_torch(hh, ww)
@@ -275,9 +259,9 @@ class RegionProposalNetwork(nn.Module):
         rois = list()
         roi_indices = list()
         for i in range(batch_size):
-            # proposal_layer:利用rpn_loc与基础anchor得到roi,限制roi的xywh范围,
+            # roi_creator:利用rpn_loc与基础anchor得到roi,限制roi的xywh范围,
             # 按rpn_fg_scores大小截取前n个roi进行nms,截取前m个roi返回(n,m在训练与测试时不同)
-            roi = self.proposal_layer(rpn_locs[i].detach(),  # 这里要截断梯度
+            roi = self.roi_creator(rpn_locs[i].detach(),  # 这里要截断梯度
                                       rpn_fg_scores[i].detach(),
                                       anchor, img_size,scale=scale)
             # batch_index = i * np.ones((len(roi),), dtype=np.int32)  # 这里本是为了roi的bs索引准备的,但由于bs固定为1,所以省略了
