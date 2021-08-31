@@ -18,9 +18,9 @@ class Config:
     lr_decay = 0.1  # 每隔指定epoch学习率下降的倍数
     lr = 1e-3       # 初始学习率
     epoch = 14
-    nms_rpn = 0.7   # rpn阶段 ProposalCreator 中的nms阈值
-    nms_test = 0.3  # 非训练阶段的nms阈值 用于筛选Faster-RCNN给出的pred_boxes
-    use_adam = False # 是否使用Adam优化方式
+    nms_rpn = 0.7   # RPN阶段 ROICreator 中的nms阈值  不区分是否是training
+    nms_roi = 0.3   # ROI阶段的nms阈值 仅存在于非训练阶段,即训练阶段整个网络只有一个rpn阶段的nms,而非训练阶段则有两个
+    use_sgd = True  # 是否使用SGD优化方式
     load_path = r''  # 基于此模型权重训练
     # 注意Faster-RCNN中是由背景这一类的,但是这里及xml2txt都没有 '__background__'这一类,是因为Faster-RCNN在内部临时把所有的
     # target_label都+1,计算ap以及最后nms的时候又跳过label等于0的情况. 详情参见 ProposalTargetCreator 类 以及_suppress方法
