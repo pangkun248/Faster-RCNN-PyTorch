@@ -306,7 +306,7 @@ class RegionProposalNetwork(nn.Module):
         """
         shift_y = torch.arange(0, feature_h * self.feat_stride, self.feat_stride, dtype=torch.float32,device='cuda')
         shift_x = torch.arange(0, feature_w * self.feat_stride, self.feat_stride, dtype=torch.float32,device='cuda')
-        shift_y, shift_x = torch.meshgrid(shift_y, shift_x)
+        shift_y, shift_x = torch.meshgrid(shift_y, shift_x,indexing='ij')
         # 这里生成的是左上角和右下角的坐标都在每个特征点左上角(需要后面拉伸开来)共(feature_h*feature_w)个anchor的坐标(yxyx形式)
         # 后面加上以特征点为中心点并且有不同面积长宽比的anchor坐标之后就成了完整的分布在fetures中的anchors
         shift = torch.stack((torch.flatten(shift_y), torch.flatten(shift_x)), 1).repeat(1, 2)
