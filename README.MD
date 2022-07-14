@@ -24,4 +24,4 @@ mine:使用我自己重写的方法计算mAP
 
 尝试将输入尺寸固定为600x1000,但发现精度下降的明显(0.69+ -> 0.63+).算了.
 
-自制的流程可视化图,更方便从宏观角度看待模型 见https://www.yuque.com/pangkun/eyohnn/xhabah
+自制的流程可视化图,更方便从宏观角度看待模型 见 https://www.yuque.com/pangkun/mizone/xhabah
