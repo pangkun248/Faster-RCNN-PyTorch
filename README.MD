@@ -1,5 +1,4 @@
 此代码源自https://github.com/chenyuntc/simple-faster-rcnn-pytorch
-
 并在此基础上进行修改与注释.以下为基于VOC2007数据集的指标,(主干网络为vgg16)
 
 |ignore_difficult |chen_mAP|mine|
@@ -23,3 +22,5 @@ mine:使用我自己重写的方法计算mAP
 训练:config文件修数据集路径之后直接运行train.py即可训练
 
 尝试将输入尺寸固定为600x1000,但发现精度下降的明显(0.69+ -> 0.63+).算了.
+
+自制的流程可视化图,更方便从宏观角度看待模型 见https://www.yuque.com/pangkun/eyohnn/xhabah
