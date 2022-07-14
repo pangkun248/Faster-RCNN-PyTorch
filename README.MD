@@ -1,4 +1,5 @@
 此代码源自https://github.com/chenyuntc/simple-faster-rcnn-pytorch
+
 并在此基础上进行修改与注释.以下为基于VOC2007数据集的指标,(主干网络为vgg16)
 
 |ignore_difficult |chen_mAP|mine|
