@@ -2,16 +2,10 @@
 
 并在此基础上进行修改与注释.以下为基于VOC2007数据集的指标,(主干网络为vgg16)
 
-|ignore_difficult |mAP|
+|是否忽略困难样本 |mAP|
 |---          |--- |
-|True      |0.6944|
-|False      |0.6213|
-
-ignore_difficult: 是否忽略difficult值为1的box
-
-True:训练测试都忽略(原作者实现方式)
-
-False:都不忽略
+|是(simple实现)      |0.6944|
+|否      |0.6213|
 
 
 训练集： 2007/trainval.txt 
