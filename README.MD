@@ -5,11 +5,13 @@
 |ignore_difficult |mAP|
 |---          |--- |
 |True      |0.6944|
-|False      |0.6876|
+|False      |0.6213|
 
 ignore_difficult: 是否忽略difficult值为1的box
 
-True:训练测试都忽略,False:都不忽略
+True:训练测试都忽略(原作者实现方式)
+
+False:都不忽略
 
 
 训练集： 2007/trainval.txt 
