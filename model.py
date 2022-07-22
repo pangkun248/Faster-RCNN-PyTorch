@@ -63,7 +63,7 @@ class FasterRCNN(nn.Module):
         self.optimizer = self.get_optimizer()
         self.mean = torch.Tensor((0., 0., 0., 0.)).cuda().repeat(self.n_class)[None]
         self.std = torch.Tensor((0.1, 0.1, 0.2, 0.2)).cuda().repeat(self.n_class)[None]
-        self.score_thresh = 0.05  # 测试时的ROI网络中的score阈值
+        self.score_thresh = 0.05  # 训练及计算mAP时的ROI网络中的score阈值,实际推理时为0.7
 
     def forward(self, x, target_boxes=None, target_labels=None, scale=1.):
         img_size = x.shape[2:]
@@ -204,7 +204,7 @@ class FasterRCNN(nn.Module):
         save_dict['model'] = self.state_dict()
         save_dict['optimizer'] = self.optimizer.state_dict()
 
-        save_path = 'weights/map_%s.pt' % save_path
+        save_path = 'map_%.4f.pt' % save_path
 
         torch.save(save_dict, save_path)
         return save_path
