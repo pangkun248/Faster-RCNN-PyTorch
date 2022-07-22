@@ -55,14 +55,14 @@ class ListDataset(Dataset):
         scale2 = self.max_size / max(in_h, in_w)
         scale = min(scale1, scale2)
         out_h, out_w = round(in_h * scale), round(in_w * scale)
-        img = F.interpolate(img.unsqueeze(0), size=(out_h, out_w), mode="bilinear",align_corners=True).squeeze(0)
+        img = F.interpolate(img[None], size=(out_h, out_w)).squeeze(0)
         img = self.normalize(img).numpy()
         if self.is_train:
             box *= scale
             # 需要将后续返回的img替换为img.copy()
             # 因为给定numpy数组的某些步幅为负(img[:, ::-1, :]和img[:, :, ::-1])。numpy官方当前不支持此功能。
             img, params = random_flip(img, x_random=True, return_param=True)
-            box = flip_bbox(box, (out_h, out_w), x_flip=params['x_flip'])
+            box = flip_bbox(box, (out_h, out_w), **params)
             return img.copy(), box.copy(), label.copy(), scale
         else:
             return img, (in_h, in_w), box, label, difficult
@@ -80,23 +80,23 @@ class ListDataset(Dataset):
 
 # 为测试图片准备
 class ImageFolder(Dataset):
-    def __init__(self, folder_path):
+    def __init__(self, folder_path,cfg):
         self.files = glob.glob("%s/*.*" % folder_path)
+        self.ToTensor = tvtsf.ToTensor()
+        self.min_size = cfg.min_size
+        self.max_size = cfg.max_size
+        self.normalize = tvtsf.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
 
     def __getitem__(self, index):
         img_path = self.files[index]
-        # 这里使用convert是防止使用png图片或其他格式时会有多个通道而引起的报错,
-        # img = tvtsf.ToTensor()(Image.open(img_path).convert('RGB'))
-        img = np.asarray(Image.open(img_file), dtype=np.float32).transpose((2, 0, 1))
-        img = img / 255.
+        img = self.ToTensor(Image.open(img_path))
         in_c, in_h, in_w = img.shape
-        # img = preprocess(img)
         # 缩放到最小比例,这样最终长和宽都能放缩到规定的尺寸
-        scale1 = 600 / min(in_h, in_w)
-        scale2 = 1000 / max(in_h, in_w)
+        scale1 = self.min_size / min(in_h, in_w)
+        scale2 = self.max_size / max(in_h, in_w)
         scale = min(scale1, scale2)
-        img = F.interpolate(img.unsqueeze(0), size=(round(in_h * scale), round(in_w * scale)), mode="nearest").squeeze(0)
-        img = tvtsf.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])(img)
+        img = F.interpolate(img[None], size=(round(in_h * scale), round(in_w * scale))).squeeze(0)
+        img = self.normalize(img)
         return img_path, img, img.shape[1:]
 
     def __len__(self):
