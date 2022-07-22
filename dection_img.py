@@ -8,10 +8,11 @@ import cv2
 from dataset import ImageFolder
 
 
-dection_imgs = ImageFolder(r'D:\py_pro\Faster-RCNN-PyTorch\data\wenyi\test')
+dection_imgs = ImageFolder(r'D:\Faster-RCNN-PyTorch\data\wenyi\test', cfg)
 model = FasterRCNN().cuda()
-model.load_state_dict(torch.load(r'D:\py_pro\Faster-RCNN-PyTorch\weights\map_0.9208.pt')['model'])
+model.load_state_dict(torch.load(r'D:\Faster-RCNN-PyTorch\map_0.6882.pt')['model'])
 model.eval()
+model.score_thresh = 0.7  # 注意该值与训练时是不同的
 
 # 为每个类名配置不同的颜色
 cls_name = cfg.class_name
@@ -28,7 +29,7 @@ for path, img,size in dection_imgs:
     img = img.unsqueeze(0)
     imgs_path.append(path)
     with torch.no_grad():
-        pred_boxes_, pred_labels_, pred_scores_ = model.predict(img, [size])
+        pred_boxes_, pred_labels_, pred_scores_ = model.predict(img.cuda(), size)
         imgs_size.append(size)
         img_detections.append([pred_boxes_, pred_labels_, pred_scores_])
 
