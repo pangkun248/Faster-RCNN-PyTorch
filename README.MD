@@ -15,7 +15,7 @@
 训练:config文件修数据集路径之后直接运行train.py即可训练
 
 
-自制的流程可视化图,更方便从宏观角度看待模型 见 https://www.yuque.com/pangkun/kb/lykze8?singleDoc# 《Faster RCNN》
+自制的流程可视化图,更方便从宏观角度看待模型 见 https://www.yuque.com/pangkun/kb/lykze8
 
 注:本份代码仅仅建议学习使用,实际应用应去寻求其他实现,比如 MMdetection或者Detectron2 
 
